@@ -1,0 +1,70 @@
+export const SYSTEM_ROLES = [
+  {
+    name: "Owner",
+    description: "Full control over the workspace",
+    permissions: [
+      "workspace:update",
+      "workspace:delete",
+      "workspace:archive",
+      "member:invite",
+      "member:remove",
+      "member:change_role",
+      "project:create",
+      "project:update",
+      "project:delete",
+      "task:create",
+      "task:update",
+      "task:delete",
+      "board:manage",
+      "settings:manage",
+    ],
+  },
+  {
+    name: "Admin",
+    description: "Manage members, projects and settings",
+    permissions: [
+      "workspace:update",
+      "member:invite",
+      "member:remove",
+      "member:change_role",
+      "project:create",
+      "project:update",
+      "project:delete",
+      "task:create",
+      "task:update",
+      "task:delete",
+      "board:manage",
+      "settings:manage",
+    ],
+  },
+  {
+    name: "Project Manager",
+    description: "Manage projects, boards and tasks",
+    permissions: [
+      "project:create",
+      "project:update",
+      "task:create",
+      "task:update",
+      "task:delete",
+      "board:manage",
+      "member:invite",
+    ],
+  },
+  {
+    name: "Developer",
+    description: "Work on assigned tasks",
+    permissions: [
+      "task:create",
+      "task:update",
+      "project:view",
+      "board:view",
+    ],
+  },
+  {
+    name: "Viewer",
+    description: "Read-only access",
+    permissions: ["project:view", "board:view", "task:view"],
+  },
+] as const;
+
+export type PermissionKey = (typeof SYSTEM_ROLES)[number]["permissions"][number];

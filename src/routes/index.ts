@@ -2,6 +2,8 @@ import { Router } from "express";
 import { successResponse } from "../common/response.js";
 import { env } from "../config/env.js";
 import { prisma } from "../database/prisma.js";
+import { authRouter } from "../modules/auth/auth.routes.js";
+import { workspaceRouter } from "../modules/workspace/workspace.routes.js";
 
 export const router = Router();
 
@@ -22,3 +24,6 @@ router.get("/health", async (_req, res) => {
     uptime: process.uptime(),
   });
 });
+
+router.use("/auth", authRouter);
+router.use("/workspaces", workspaceRouter);
