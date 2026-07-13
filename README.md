@@ -23,6 +23,8 @@ docker compose up -d
 
 Then point `DATABASE_URL` / `REDIS_URL` at localhost if you prefer local infra over Neon / Upstash.
 
+Local email uses **Mailpit** (`SMTP_HOST=localhost`, port `1025`). Open the inbox at http://localhost:8025.
+
 ## Scripts
 
 ```bash
