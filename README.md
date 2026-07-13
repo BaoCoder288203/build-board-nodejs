@@ -29,8 +29,16 @@ Then point `DATABASE_URL` / `REDIS_URL` at localhost if you prefer local infra o
 npm run dev              # API on http://localhost:4000
 npm run lint             # typecheck
 npm run prisma:generate
-npm run prisma:push      # push schema (Phase 0)
-npm run prisma:migrate   # migrations (from Phase 1)
+npm run prisma:push      # sync schema (dev)
+npm run prisma:migrate   # create migrations
+npm run prisma:seed      # seed demo data
+```
+
+## Seed login (Phase 1)
+
+```text
+email:    admin@buildboard.local
+password: Password123!
 ```
 
 ## Health
