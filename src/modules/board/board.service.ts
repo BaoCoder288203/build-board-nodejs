@@ -188,6 +188,11 @@ export async function getBoard(userId: string, boardId: string) {
                   },
                 },
               },
+              _count: {
+                select: {
+                  comments: { where: { deletedAt: null } },
+                },
+              },
             },
           },
         },
@@ -249,6 +254,7 @@ export async function getBoard(userId: string, boardId: string) {
                   ),
                 }
               : null,
+          commentsCount: t._count.comments,
         };
       }),
     })),
