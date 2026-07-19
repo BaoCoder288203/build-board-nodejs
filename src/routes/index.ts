@@ -6,6 +6,7 @@ import { authRouter } from "../modules/auth/auth.routes.js";
 import { boardRouter } from "../modules/board/board.routes.js";
 import { columnRouter } from "../modules/column/column.routes.js";
 import { projectRouter } from "../modules/project/project.routes.js";
+import { taskRouter } from "../modules/task/task.routes.js";
 import { workspaceRouter } from "../modules/workspace/workspace.routes.js";
 
 export const router = Router();
@@ -33,3 +34,4 @@ router.use("/workspaces", workspaceRouter);
 router.use("/projects", projectRouter);
 router.use("/boards", boardRouter);
 router.use("/columns", columnRouter);
+router.use("/tasks", taskRouter);
