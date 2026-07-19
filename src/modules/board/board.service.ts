@@ -148,9 +148,40 @@ export async function getBoard(userId: string, boardId: string) {
     where: { id: boardId, deletedAt: null },
     include: {
       columns: {
-        where: { deletedAt: null },
+        where: { deletedAt: null, isArchived: false },
         orderBy: { position: "asc" },
-        include: { _count: { select: { tasks: true } } },
+        include: {
+          _count: { select: { tasks: true } },
+          tasks: {
+            where: { deletedAt: null },
+            orderBy: { position: "asc" },
+            include: {
+              assignments: {
+                include: {
+                  workspaceMember: {
+                    include: {
+                      user: {
+                        select: {
+                          id: true,
+                          fullName: true,
+                          email: true,
+                          avatarUrl: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              labels: {
+                include: {
+                  label: {
+                    select: { id: true, name: true, color: true },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       _count: { select: { tasks: true } },
       project: { select: { id: true, name: true, workspaceId: true } },
@@ -167,6 +198,7 @@ export async function getBoard(userId: string, boardId: string) {
     tasksCount: board._count.tasks,
     columns: board.columns.map((c) => ({
       id: c.id,
+      boardId: c.boardId,
       name: c.name,
       description: c.description,
       color: c.color,
@@ -174,7 +206,25 @@ export async function getBoard(userId: string, boardId: string) {
       taskLimit: c.taskLimit,
       isDefault: c.isDefault,
       isDone: c.isDone,
-      tasksCount: c._count.tasks,
+      tasksCount: c.tasks.length,
+      tasks: c.tasks.map((t) => ({
+        id: t.id,
+        taskId: t.id,
+        columnId: t.columnId,
+        code: t.code,
+        title: t.title,
+        description: t.description,
+        priority: t.priority,
+        status: t.status,
+        dueDate: t.dueDate,
+        position: t.position,
+        createdAt: t.createdAt,
+        assignees: t.assignments.map((a) => ({
+          workspaceMemberId: a.workspaceMemberId,
+          user: a.workspaceMember.user,
+        })),
+        labels: t.labels.map((l) => l.label),
+      })),
     })),
   });
 }

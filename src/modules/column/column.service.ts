@@ -1,4 +1,4 @@
-import { ActivityAction, ActivityEntityType } from "@prisma/client";
+import { ActivityAction, ActivityEntityType, TaskStatus } from "@prisma/client";
 import { getAccessibleProject } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { prisma } from "../../database/prisma.js";
@@ -30,6 +30,7 @@ function publicColumn(column: {
   taskLimit: number | null;
   isDefault: boolean;
   isDone: boolean;
+  isArchived?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -43,6 +44,7 @@ function publicColumn(column: {
     taskLimit: column.taskLimit,
     isDefault: column.isDefault,
     isDone: column.isDone,
+    isArchived: column.isArchived ?? false,
     createdAt: column.createdAt,
     updatedAt: column.updatedAt,
   };
@@ -59,7 +61,7 @@ export async function createColumn(userId: string, input: CreateColumnInput) {
   }
 
   const maxPos = await prisma.column.aggregate({
-    where: { boardId: input.boardId, deletedAt: null },
+    where: { boardId: input.boardId, deletedAt: null, isArchived: false },
     _max: { position: true },
   });
 
@@ -93,7 +95,7 @@ export async function createColumn(userId: string, input: CreateColumnInput) {
 export async function listColumns(userId: string, boardId: string) {
   await getBoardAccess(userId, boardId);
   const columns = await prisma.column.findMany({
-    where: { boardId, deletedAt: null },
+    where: { boardId, deletedAt: null, isArchived: false },
     orderBy: { position: "asc" },
     include: { _count: { select: { tasks: true } } },
   });
@@ -162,7 +164,7 @@ export async function reorderColumns(userId: string, input: ReorderColumnsInput)
   }
 
   const existing = await prisma.column.findMany({
-    where: { boardId: input.boardId, deletedAt: null },
+    where: { boardId: input.boardId, deletedAt: null, isArchived: false },
   });
   if (existing.length !== input.columnIds.length) {
     throw new AppError(
@@ -261,4 +263,414 @@ export async function deleteColumn(userId: string, columnId: string) {
   });
 
   return { message: "Column deleted successfully" };
+}
+
+export async function copyColumn(
+  userId: string,
+  columnId: string,
+  input: { name: string },
+) {
+  const source = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: false },
+    include: {
+      tasks: {
+        where: { deletedAt: null },
+        orderBy: { position: "asc" },
+        include: {
+          labels: true,
+          assignments: true,
+        },
+      },
+    },
+  });
+  if (!source) {
+    throw new AppError("Column not found", 404, "COLUMN_NOT_FOUND");
+  }
+
+  const { board, access } = await getBoardAccess(userId, source.boardId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to copy columns",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  const maxPos = await prisma.column.aggregate({
+    where: { boardId: source.boardId, deletedAt: null, isArchived: false },
+    _max: { position: true },
+  });
+
+  const created = await prisma.$transaction(async (tx) => {
+    const column = await tx.column.create({
+      data: {
+        boardId: source.boardId,
+        name: input.name,
+        description: source.description,
+        color: source.color,
+        taskLimit: source.taskLimit,
+        isDone: source.isDone,
+        position: (maxPos._max.position ?? -1) + 1,
+        createdBy: userId,
+      },
+    });
+
+    for (let i = 0; i < source.tasks.length; i += 1) {
+      const t = source.tasks[i]!;
+      const count = await tx.task.count({ where: { projectId: board.projectId } });
+      const copied = await tx.task.create({
+        data: {
+          workspaceId: board.project.workspaceId,
+          projectId: board.projectId,
+          boardId: source.boardId,
+          columnId: column.id,
+          createdBy: userId,
+          code: `T-${count + 1}`,
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          status: t.status,
+          dueDate: t.dueDate,
+          startDate: t.startDate,
+          position: i,
+          labels: t.labels.length
+            ? { create: t.labels.map((l) => ({ labelId: l.labelId })) }
+            : undefined,
+          assignments: t.assignments.length
+            ? {
+                create: t.assignments.map((a) => ({
+                  workspaceMemberId: a.workspaceMemberId,
+                  assignedBy: userId,
+                })),
+              }
+            : undefined,
+        },
+      });
+      await tx.taskPosition.create({
+        data: {
+          taskId: copied.id,
+          columnId: column.id,
+          position: i,
+          movedBy: userId,
+        },
+      });
+    }
+
+    await tx.activity.create({
+      data: {
+        workspaceId: board.project.workspaceId,
+        projectId: board.projectId,
+        actorId: userId,
+        entityType: ActivityEntityType.COLUMN,
+        entityId: column.id,
+        action: ActivityAction.CREATE,
+        metadata: { type: "column_copied", fromColumnId: columnId },
+        afterData: { name: column.name },
+      },
+    });
+
+    return column;
+  });
+
+  return { ...publicColumn(created), columnId: created.id };
+}
+
+export async function moveColumn(
+  userId: string,
+  columnId: string,
+  input: { boardId: string; position: number },
+) {
+  const column = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: false },
+    include: { _count: { select: { tasks: true } } },
+  });
+  if (!column) {
+    throw new AppError("Column not found", 404, "COLUMN_NOT_FOUND");
+  }
+
+  const { board: sourceBoard, access: sourceAccess } = await getBoardAccess(
+    userId,
+    column.boardId,
+  );
+  const { board: destBoard, access: destAccess } = await getBoardAccess(
+    userId,
+    input.boardId,
+  );
+
+  if (!sourceAccess.canManageProject || !destAccess.canManageProject) {
+    throw new AppError(
+      "You do not have permission to move columns",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  if (sourceBoard.projectId !== destBoard.projectId) {
+    throw new AppError(
+      "Can only move columns between boards in the same project",
+      400,
+      "INVALID_MOVE",
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Free source position slots
+    await tx.column.update({
+      where: { id: columnId },
+      data: { position: -1 - Date.now() % 100000, updatedBy: userId },
+    });
+    await tx.column.updateMany({
+      where: {
+        boardId: column.boardId,
+        deletedAt: null,
+        isArchived: false,
+        position: { gt: column.position },
+        id: { not: columnId },
+      },
+      data: { position: { decrement: 1 } },
+    });
+
+    // Make room at destination
+    await tx.column.updateMany({
+      where: {
+        boardId: input.boardId,
+        deletedAt: null,
+        isArchived: false,
+        position: { gte: input.position },
+      },
+      data: { position: { increment: 1 } },
+    });
+
+    await tx.column.update({
+      where: { id: columnId },
+      data: {
+        boardId: input.boardId,
+        position: input.position,
+        updatedBy: userId,
+      },
+    });
+
+    if (column.boardId !== input.boardId && column._count.tasks > 0) {
+      await tx.task.updateMany({
+        where: { columnId, deletedAt: null },
+        data: { boardId: input.boardId, updatedBy: userId },
+      });
+    }
+
+    await tx.activity.create({
+      data: {
+        workspaceId: destBoard.project.workspaceId,
+        projectId: destBoard.projectId,
+        actorId: userId,
+        entityType: ActivityEntityType.COLUMN,
+        entityId: columnId,
+        action: ActivityAction.MOVE,
+        beforeData: { boardId: column.boardId, position: column.position },
+        afterData: { boardId: input.boardId, position: input.position },
+      },
+    });
+  });
+
+  const updated = await prisma.column.findUniqueOrThrow({ where: { id: columnId } });
+  return publicColumn(updated);
+}
+
+export async function moveAllTasksInColumn(
+  userId: string,
+  columnId: string,
+  destinationColumnId: string,
+) {
+  if (columnId === destinationColumnId) {
+    throw new AppError(
+      "Source and destination columns must differ",
+      400,
+      "INVALID_MOVE",
+    );
+  }
+
+  const source = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: false },
+  });
+  const dest = await prisma.column.findFirst({
+    where: { id: destinationColumnId, deletedAt: null, isArchived: false },
+  });
+  if (!source || !dest) {
+    throw new AppError("Column not found", 404, "COLUMN_NOT_FOUND");
+  }
+  if (source.boardId !== dest.boardId) {
+    throw new AppError(
+      "Both columns must belong to the same board",
+      400,
+      "INVALID_MOVE",
+    );
+  }
+
+  const { board, access } = await getBoardAccess(userId, source.boardId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to move cards",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  const tasks = await prisma.task.findMany({
+    where: { columnId, deletedAt: null },
+    orderBy: { position: "asc" },
+  });
+
+  const maxPos = await prisma.task.aggregate({
+    where: { columnId: destinationColumnId, deletedAt: null },
+    _max: { position: true },
+  });
+  let nextPos = (maxPos._max.position ?? -1) + 1;
+
+  await prisma.$transaction(async (tx) => {
+    for (const task of tasks) {
+      await tx.task.update({
+        where: { id: task.id },
+        data: {
+          columnId: destinationColumnId,
+          position: nextPos,
+          updatedBy: userId,
+          ...(dest.isDone
+            ? { status: TaskStatus.DONE, completedAt: task.completedAt ?? new Date() }
+            : {}),
+        },
+      });
+      await tx.taskPosition.create({
+        data: {
+          taskId: task.id,
+          columnId: destinationColumnId,
+          position: nextPos,
+          movedBy: userId,
+        },
+      });
+      nextPos += 1;
+    }
+
+    await tx.activity.create({
+      data: {
+        workspaceId: board.project.workspaceId,
+        projectId: board.projectId,
+        actorId: userId,
+        entityType: ActivityEntityType.COLUMN,
+        entityId: columnId,
+        action: ActivityAction.MOVE,
+        metadata: {
+          type: "move_all_cards",
+          toColumnId: destinationColumnId,
+          count: tasks.length,
+        },
+      },
+    });
+  });
+
+  return { message: `Moved ${tasks.length} cards`, count: tasks.length };
+}
+
+export async function sortColumnTasks(
+  userId: string,
+  columnId: string,
+  sortBy: "created_desc" | "created_asc" | "name_asc",
+) {
+  const column = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: false },
+  });
+  if (!column) {
+    throw new AppError("Column not found", 404, "COLUMN_NOT_FOUND");
+  }
+
+  const { board, access } = await getBoardAccess(userId, column.boardId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to sort columns",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  const orderBy =
+    sortBy === "created_desc"
+      ? ({ createdAt: "desc" } as const)
+      : sortBy === "created_asc"
+        ? ({ createdAt: "asc" } as const)
+        : ({ title: "asc" } as const);
+
+  const tasks = await prisma.task.findMany({
+    where: { columnId, deletedAt: null },
+    orderBy,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < tasks.length; i += 1) {
+      await tx.task.update({
+        where: { id: tasks[i]!.id },
+        data: { position: i + 1000 },
+      });
+    }
+    for (let i = 0; i < tasks.length; i += 1) {
+      await tx.task.update({
+        where: { id: tasks[i]!.id },
+        data: { position: i, updatedBy: userId },
+      });
+    }
+    await tx.activity.create({
+      data: {
+        workspaceId: board.project.workspaceId,
+        projectId: board.projectId,
+        actorId: userId,
+        entityType: ActivityEntityType.COLUMN,
+        entityId: columnId,
+        action: ActivityAction.UPDATE,
+        metadata: { type: "column_sorted", sortBy },
+      },
+    });
+  });
+
+  return { message: "Column sorted", count: tasks.length };
+}
+
+export async function archiveColumn(userId: string, columnId: string) {
+  const column = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: false },
+  });
+  if (!column) {
+    throw new AppError("Column not found", 404, "COLUMN_NOT_FOUND");
+  }
+  if (column.isDefault) {
+    throw new AppError(
+      "Cannot archive the default column",
+      400,
+      "CANNOT_ARCHIVE_DEFAULT_COLUMN",
+    );
+  }
+
+  const { board, access } = await getBoardAccess(userId, column.boardId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to archive columns",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  await prisma.column.update({
+    where: { id: columnId },
+    data: { isArchived: true, updatedBy: userId },
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: board.project.workspaceId,
+      projectId: board.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.COLUMN,
+      entityId: columnId,
+      action: ActivityAction.ARCHIVE,
+      beforeData: { name: column.name },
+    },
+  });
+
+  return { message: "Column archived successfully" };
 }
