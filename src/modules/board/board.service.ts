@@ -179,6 +179,15 @@ export async function getBoard(userId: string, boardId: string) {
                   },
                 },
               },
+              checklists: {
+                where: { deletedAt: null },
+                select: {
+                  items: {
+                    where: { deletedAt: null },
+                    select: { isCompleted: true },
+                  },
+                },
+              },
             },
           },
         },
@@ -207,24 +216,41 @@ export async function getBoard(userId: string, boardId: string) {
       isDefault: c.isDefault,
       isDone: c.isDone,
       tasksCount: c.tasks.length,
-      tasks: c.tasks.map((t) => ({
-        id: t.id,
-        taskId: t.id,
-        columnId: t.columnId,
-        code: t.code,
-        title: t.title,
-        description: t.description,
-        priority: t.priority,
-        status: t.status,
-        dueDate: t.dueDate,
-        position: t.position,
-        createdAt: t.createdAt,
-        assignees: t.assignments.map((a) => ({
-          workspaceMemberId: a.workspaceMemberId,
-          user: a.workspaceMember.user,
-        })),
-        labels: t.labels.map((l) => l.label),
-      })),
+      tasks: c.tasks.map((t) => {
+        const checklistItems = t.checklists.flatMap((cl) => cl.items);
+        const checklistTotal = checklistItems.length;
+        const checklistCompleted = checklistItems.filter(
+          (i) => i.isCompleted,
+        ).length;
+        return {
+          id: t.id,
+          taskId: t.id,
+          columnId: t.columnId,
+          code: t.code,
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          status: t.status,
+          dueDate: t.dueDate,
+          position: t.position,
+          createdAt: t.createdAt,
+          assignees: t.assignments.map((a) => ({
+            workspaceMemberId: a.workspaceMemberId,
+            user: a.workspaceMember.user,
+          })),
+          labels: t.labels.map((l) => l.label),
+          checklistProgress:
+            checklistTotal > 0
+              ? {
+                  completed: checklistCompleted,
+                  total: checklistTotal,
+                  progress: Math.round(
+                    (checklistCompleted / checklistTotal) * 100,
+                  ),
+                }
+              : null,
+        };
+      }),
     })),
   });
 }
