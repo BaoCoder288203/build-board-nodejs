@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "node:path";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { router } from "./routes/index.js";
@@ -11,7 +12,11 @@ export function createApp() {
   const app = express();
 
   app.set("trust proxy", 1);
-  app.use(helmet());
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
   app.use(
     cors({
       origin: env.CORS_ORIGIN.split(",").map((origin) => origin.trim()),
@@ -22,6 +27,14 @@ export function createApp() {
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
+
+  app.use(
+    "/uploads",
+    express.static(path.resolve(process.cwd(), env.UPLOAD_DIR), {
+      fallthrough: true,
+      maxAge: "7d",
+    }),
+  );
 
   app.get("/", (_req, res) => {
     res.json({
