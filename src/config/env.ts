@@ -35,6 +35,10 @@ const envSchema = z.object({
   CLOUDINARY_URL: z.string().optional(),
   CLOUDINARY_FOLDER: z.string().optional(),
 
+  /** local | cloudinary — defaults to cloudinary when credentials exist, else local */
+  STORAGE_DRIVER: z.enum(["local", "cloudinary"]).optional(),
+  UPLOAD_DIR: z.string().default("uploads"),
+
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
 
