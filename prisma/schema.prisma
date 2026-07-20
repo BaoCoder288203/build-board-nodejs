@@ -65,6 +65,7 @@ enum AttachmentFileType {
 
 enum StorageProvider {
   CLOUDINARY
+  LOCAL
 }
 
 enum ActivityEntityType {

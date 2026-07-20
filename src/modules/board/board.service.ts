@@ -191,6 +191,9 @@ export async function getBoard(userId: string, boardId: string) {
               _count: {
                 select: {
                   comments: { where: { deletedAt: null } },
+                  attachments: {
+                    where: { deletedAt: null, commentId: null },
+                  },
                 },
               },
             },
@@ -255,6 +258,7 @@ export async function getBoard(userId: string, boardId: string) {
                 }
               : null,
           commentsCount: t._count.comments,
+          attachmentsCount: t._count.attachments,
         };
       }),
     })),
