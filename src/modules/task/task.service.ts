@@ -1,6 +1,8 @@
 import {
   ActivityAction,
   ActivityEntityType,
+  NotificationEntityType,
+  NotificationType,
   TaskPriority,
   TaskStatus,
   type Prisma,
@@ -10,6 +12,7 @@ import {
   getAccessibleProject,
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
+import { notifyUser } from "../../common/notify.js";
 import { prisma } from "../../database/prisma.js";
 import type {
   CreateTaskInput,
@@ -567,6 +570,24 @@ export async function assignTask(
     },
   });
 
+  if (assigneeUserId !== userId) {
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true },
+    });
+    await notifyUser({
+      workspaceId: task.workspaceId,
+      recipientId: assigneeUserId,
+      senderId: userId,
+      entityType: NotificationEntityType.TASK,
+      entityId: taskId,
+      notificationType: NotificationType.TASK_ASSIGNED,
+      title: "Task assigned to you",
+      message: `${actor?.fullName ?? "Someone"} assigned you to “${task.title}”.`,
+      metadata: { taskId, boardId: task.boardId },
+    });
+  }
+
   return getTask(userId, taskId);
 }
 
@@ -600,6 +621,24 @@ export async function unassignTask(
       afterData: { userId: assigneeUserId },
     },
   });
+
+  if (assigneeUserId !== userId) {
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true },
+    });
+    await notifyUser({
+      workspaceId: task.workspaceId,
+      recipientId: assigneeUserId,
+      senderId: userId,
+      entityType: NotificationEntityType.TASK,
+      entityId: taskId,
+      notificationType: NotificationType.TASK_UNASSIGNED,
+      title: "Removed from a task",
+      message: `${actor?.fullName ?? "Someone"} unassigned you from “${task.title}”.`,
+      metadata: { taskId, boardId: task.boardId },
+    });
+  }
 
   return getTask(userId, taskId);
 }

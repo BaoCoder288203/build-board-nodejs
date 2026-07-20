@@ -6,6 +6,7 @@ import {
   NotificationType,
 } from "@prisma/client";
 import { AppError } from "../../common/app-error.js";
+import { notifyUser } from "../../common/notify.js";
 import { env } from "../../config/env.js";
 import { prisma } from "../../database/prisma.js";
 import { sendEmail } from "../../providers/email.provider.js";
@@ -433,17 +434,15 @@ export async function inviteMember(
   });
 
   if (existingUser) {
-    await prisma.notification.create({
-      data: {
-        workspaceId,
-        recipientId: existingUser.id,
-        senderId: actorId,
-        entityType: NotificationEntityType.WORKSPACE,
-        entityId: invitation.id,
-        notificationType: NotificationType.WORKSPACE_INVITE,
-        title: "Workspace invitation",
-        message: `You were invited to join a workspace as ${role.name}.`,
-      },
+    await notifyUser({
+      workspaceId,
+      recipientId: existingUser.id,
+      senderId: actorId,
+      entityType: NotificationEntityType.WORKSPACE,
+      entityId: invitation.id,
+      notificationType: NotificationType.WORKSPACE_INVITE,
+      title: "Workspace invitation",
+      message: `You were invited to join a workspace as ${role.name}.`,
     });
   }
 
@@ -626,17 +625,15 @@ export async function changeMemberRole(
     },
   });
 
-  await prisma.notification.create({
-    data: {
-      workspaceId,
-      recipientId: member.userId,
-      senderId: actorId,
-      entityType: NotificationEntityType.MEMBER,
-      entityId: member.id,
-      notificationType: NotificationType.ROLE_UPDATED,
-      title: "Role updated",
-      message: `Your workspace role was changed to ${role.name}.`,
-    },
+  await notifyUser({
+    workspaceId,
+    recipientId: member.userId,
+    senderId: actorId,
+    entityType: NotificationEntityType.MEMBER,
+    entityId: member.id,
+    notificationType: NotificationType.ROLE_UPDATED,
+    title: "Role updated",
+    message: `Your workspace role was changed to ${role.name}.`,
   });
 
   await logActivity({
@@ -678,17 +675,15 @@ export async function removeMember(
 
   await prisma.workspaceMember.delete({ where: { id: memberId } });
 
-  await prisma.notification.create({
-    data: {
-      workspaceId,
-      recipientId: member.userId,
-      senderId: actorId,
-      entityType: NotificationEntityType.MEMBER,
-      entityId: memberId,
-      notificationType: NotificationType.SYSTEM,
-      title: "Removed from workspace",
-      message: "You were removed from a workspace.",
-    },
+  await notifyUser({
+    workspaceId,
+    recipientId: member.userId,
+    senderId: actorId,
+    entityType: NotificationEntityType.MEMBER,
+    entityId: memberId,
+    notificationType: NotificationType.SYSTEM,
+    title: "Removed from workspace",
+    message: "You were removed from a workspace.",
   });
 
   await logActivity({

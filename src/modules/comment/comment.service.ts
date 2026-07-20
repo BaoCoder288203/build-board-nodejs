@@ -1,6 +1,8 @@
 import {
   ActivityAction,
   ActivityEntityType,
+  NotificationEntityType,
+  NotificationType,
   type Prisma,
 } from "@prisma/client";
 import {
@@ -9,6 +11,7 @@ import {
   getWorkspaceMembership,
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
+import { notifyUser } from "../../common/notify.js";
 import { prisma } from "../../database/prisma.js";
 import type {
   CreateCommentInput,
@@ -215,6 +218,80 @@ async function createCommentRecord(options: {
 
     return comment;
   });
+
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fullName: true },
+  });
+  const actorName = actor?.fullName ?? "Someone";
+  const preview =
+    content.length > 80 ? `${content.slice(0, 80)}…` : content;
+
+  // Mentions
+  if (mentionMemberIds.length) {
+    const mentioned = await prisma.workspaceMember.findMany({
+      where: { id: { in: mentionMemberIds } },
+      select: { userId: true },
+    });
+    for (const m of mentioned) {
+      await notifyUser({
+        workspaceId: task.workspaceId,
+        recipientId: m.userId,
+        senderId: userId,
+        entityType: NotificationEntityType.COMMENT,
+        entityId: created.id,
+        notificationType: NotificationType.USER_MENTIONED,
+        title: "You were mentioned",
+        message: `${actorName} mentioned you: ${preview}`,
+        metadata: { taskId: task.id, boardId: undefined },
+      });
+    }
+  }
+
+  // Reply to parent author
+  if (parentCommentId) {
+    const parent = await prisma.comment.findFirst({
+      where: { id: parentCommentId, deletedAt: null },
+      include: { author: { select: { userId: true } } },
+    });
+    if (parent && parent.author.userId !== userId) {
+      await notifyUser({
+        workspaceId: task.workspaceId,
+        recipientId: parent.author.userId,
+        senderId: userId,
+        entityType: NotificationEntityType.COMMENT,
+        entityId: created.id,
+        notificationType: NotificationType.COMMENT_REPLY,
+        title: "New reply on your comment",
+        message: `${actorName} replied: ${preview}`,
+        metadata: { taskId: task.id, parentCommentId },
+      });
+    }
+  } else {
+    // Top-level comment: notify task assignees (except author)
+    const assignees = await prisma.taskAssignment.findMany({
+      where: { taskId: task.id },
+      include: { workspaceMember: { select: { userId: true } } },
+    });
+    const recipientIds = new Set(
+      assignees
+        .map((a) => a.workspaceMember.userId)
+        .filter((id) => id !== userId),
+    );
+    for (const recipientId of recipientIds) {
+      await notifyUser({
+        workspaceId: task.workspaceId,
+        recipientId,
+        senderId: userId,
+        entityType: NotificationEntityType.COMMENT,
+        entityId: created.id,
+        notificationType: NotificationType.COMMENT_ADDED,
+        title: "New comment on a task",
+        message: `${actorName} commented: ${preview}`,
+        metadata: { taskId: task.id },
+      });
+    }
+  }
 
   return publicComment(created, 0);
 }
