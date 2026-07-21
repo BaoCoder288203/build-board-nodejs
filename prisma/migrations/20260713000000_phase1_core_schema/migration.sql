@@ -292,6 +292,7 @@ CREATE TABLE "columns" (
     "task_limit" INTEGER,
     "is_default" BOOLEAN NOT NULL DEFAULT false,
     "is_done" BOOLEAN NOT NULL DEFAULT false,
+    "is_archived" BOOLEAN NOT NULL DEFAULT false,
     "created_by" UUID NOT NULL,
     "updated_by" UUID,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -677,6 +678,9 @@ CREATE INDEX "columns_position_idx" ON "columns"("position");
 CREATE INDEX "columns_created_at_idx" ON "columns"("created_at");
 
 -- CreateIndex
+CREATE INDEX "columns_is_archived_idx" ON "columns"("is_archived");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "columns_board_id_position_key" ON "columns"("board_id", "position");
 
 -- CreateIndex
@@ -1059,4 +1063,3 @@ ALTER TABLE "notifications" ADD CONSTRAINT "notifications_sender_id_fkey" FOREIG
 
 -- AddForeignKey
 ALTER TABLE "notification_settings" ADD CONSTRAINT "notification_settings_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-

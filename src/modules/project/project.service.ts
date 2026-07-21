@@ -15,6 +15,13 @@ import {
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { prisma } from "../../database/prisma.js";
+import {
+  buildBoardCoverUrl,
+  extractProjectInitial,
+  pickWorkspaceTheme,
+  resolveProjectTheme,
+  resolveWorkspaceTheme,
+} from "../../common/visual-identity.js";
 import type { CreateProjectInput, UpdateProjectInput } from "./project.schema.js";
 
 function publicProject(
@@ -27,6 +34,8 @@ function publicProject(
     description: string | null;
     icon: string | null;
     color: string | null;
+    themeColorFrom?: string | null;
+    themeColorTo?: string | null;
     visibility: ProjectVisibility;
     archivedAt: Date | null;
     createdAt: Date;
@@ -34,6 +43,7 @@ function publicProject(
   },
   extras?: Record<string, unknown>,
 ) {
+  const visual = resolveProjectTheme(project);
   return {
     id: project.id,
     workspaceId: project.workspaceId,
@@ -41,8 +51,10 @@ function publicProject(
     name: project.name,
     slug: project.slug,
     description: project.description,
-    icon: project.icon,
-    color: project.color,
+    icon: visual.icon,
+    color: visual.themeColorFrom,
+    themeColorFrom: visual.themeColorFrom,
+    themeColorTo: visual.themeColorTo,
     visibility: project.visibility,
     archivedAt: project.archivedAt,
     createdAt: project.createdAt,
@@ -70,6 +82,21 @@ export async function createProject(userId: string, input: CreateProjectInput) {
   }
 
   const project = await prisma.$transaction(async (tx) => {
+    const workspace = await tx.workspace.findFirst({
+      where: { id: input.workspaceId, deletedAt: null },
+      select: {
+        themeColorFrom: true,
+        themeColorTo: true,
+      },
+    });
+    const workspaceTheme = workspace
+      ? resolveWorkspaceTheme({ id: input.workspaceId, ...workspace })
+      : pickWorkspaceTheme(input.workspaceId);
+    const projectTheme = {
+      themeColorFrom: input.color ?? workspaceTheme.themeColorFrom,
+      themeColorTo: workspaceTheme.themeColorTo,
+    };
+
     const created = await tx.project.create({
       data: {
         workspaceId: input.workspaceId,
@@ -78,8 +105,10 @@ export async function createProject(userId: string, input: CreateProjectInput) {
         slug,
         description: input.description ?? null,
         visibility: input.visibility,
-        color: input.color ?? "#2563EB",
-        icon: input.icon ?? null,
+        color: projectTheme.themeColorFrom,
+        themeColorFrom: projectTheme.themeColorFrom,
+        themeColorTo: projectTheme.themeColorTo,
+        icon: input.icon ?? extractProjectInitial(input.name),
         statuses: {
           create: DEFAULT_PROJECT_STATUSES.map((s) => ({ ...s })),
         },
@@ -95,13 +124,16 @@ export async function createProject(userId: string, input: CreateProjectInput) {
       },
     });
 
+    const mainBoardId = crypto.randomUUID();
     await tx.board.create({
       data: {
+        id: mainBoardId,
         projectId: created.id,
         name: "Main Board",
         position: 0,
         isDefault: true,
         color: created.color,
+        coverUrl: buildBoardCoverUrl(mainBoardId),
         createdBy: userId,
         columns: {
           create: DEFAULT_BOARD_COLUMNS.map((col) => ({

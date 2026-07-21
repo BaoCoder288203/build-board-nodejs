@@ -253,9 +253,11 @@ model Workspace {
   name        String              @db.VarChar(255)
   slug        String              @unique @db.VarChar(100)
   description String?             @db.Text
-  logoUrl     String?             @map("logo_url") @db.Text
-  coverUrl    String?             @map("cover_url") @db.Text
-  visibility  WorkspaceVisibility @default(PRIVATE)
+  logoUrl        String?             @map("logo_url") @db.Text
+  coverUrl       String?             @map("cover_url") @db.Text
+  themeColorFrom String?             @map("theme_color_from") @db.VarChar(7)
+  themeColorTo   String?             @map("theme_color_to") @db.VarChar(7)
+  visibility     WorkspaceVisibility @default(PRIVATE)
   timezone    String?             @db.VarChar(100)
   createdAt   DateTime            @default(now()) @map("created_at")
   updatedAt   DateTime            @updatedAt @map("updated_at")
@@ -403,9 +405,11 @@ model Project {
   name        String            @db.VarChar(255)
   slug        String            @db.VarChar(100)
   description String?           @db.Text
-  icon        String?           @db.VarChar(50)
-  color       String?           @db.VarChar(30)
-  visibility  ProjectVisibility @default(PRIVATE)
+  icon           String?           @db.VarChar(50)
+  color          String?           @db.VarChar(30)
+  themeColorFrom String?           @map("theme_color_from") @db.VarChar(7)
+  themeColorTo   String?           @map("theme_color_to") @db.VarChar(7)
+  visibility     ProjectVisibility @default(PRIVATE)
   startDate   DateTime?         @map("start_date")
   dueDate     DateTime?         @map("due_date")
   archivedAt  DateTime?         @map("archived_at")
@@ -501,6 +505,7 @@ model Board {
   description String?   @db.Text
   icon        String?   @db.VarChar(50)
   color       String?   @db.VarChar(30)
+  coverUrl    String?   @map("cover_url") @db.Text
   position    Int       @default(0)
   isDefault   Boolean   @default(false) @map("is_default")
   isArchived  Boolean   @default(false) @map("is_archived")
