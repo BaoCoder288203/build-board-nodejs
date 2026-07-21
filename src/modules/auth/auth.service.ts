@@ -1,8 +1,10 @@
 import * as argon2 from "argon2";
+import { ActivityAction } from "@prisma/client";
 import type { Request } from "express";
 import { AppError } from "../../common/app-error.js";
 import { env } from "../../config/env.js";
 import { prisma } from "../../database/prisma.js";
+import { logAuthActivity } from "../activity/activity.service.js";
 import {
   resetPasswordEmailHtml,
   sendEmail,
@@ -166,6 +168,13 @@ export async function login(
     data: { lastLoginAt: new Date() },
   });
 
+  void logAuthActivity({
+    userId: user.id,
+    action: ActivityAction.LOGIN,
+    ip: meta?.ip,
+    userAgent: meta?.userAgent,
+  }).catch(() => {});
+
   return {
     ...tokens,
     user: publicUser(user),
@@ -216,6 +225,11 @@ export async function logout(userId: string, rawRefreshToken?: string) {
       data: { revokedAt: new Date() },
     });
   }
+
+  void logAuthActivity({
+    userId,
+    action: ActivityAction.LOGOUT,
+  }).catch(() => {});
 
   return { message: "Logged out successfully" };
 }
