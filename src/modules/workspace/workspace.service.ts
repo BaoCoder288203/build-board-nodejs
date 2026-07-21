@@ -7,6 +7,10 @@ import {
 } from "@prisma/client";
 import { AppError } from "../../common/app-error.js";
 import { notifyUser } from "../../common/notify.js";
+import {
+  pickWorkspaceTheme,
+  resolveWorkspaceTheme,
+} from "../../common/visual-identity.js";
 import { env } from "../../config/env.js";
 import { prisma } from "../../database/prisma.js";
 import { sendEmail } from "../../providers/email.provider.js";
@@ -27,6 +31,8 @@ function publicWorkspace(
     description: string | null;
     logoUrl: string | null;
     coverUrl: string | null;
+    themeColorFrom?: string | null;
+    themeColorTo?: string | null;
     visibility: string;
     timezone: string | null;
     ownerId: string;
@@ -35,6 +41,7 @@ function publicWorkspace(
   },
   extras?: Record<string, unknown>,
 ) {
+  const theme = resolveWorkspaceTheme(workspace);
   return {
     id: workspace.id,
     name: workspace.name,
@@ -42,6 +49,8 @@ function publicWorkspace(
     description: workspace.description,
     logoUrl: workspace.logoUrl,
     coverUrl: workspace.coverUrl,
+    themeColorFrom: theme.themeColorFrom,
+    themeColorTo: theme.themeColorTo,
     visibility: workspace.visibility,
     timezone: workspace.timezone,
     ownerId: workspace.ownerId,
@@ -84,11 +93,14 @@ export async function createWorkspace(userId: string, input: CreateWorkspaceInpu
   }
 
   const workspace = await prisma.$transaction(async (tx) => {
+    const theme = pickWorkspaceTheme(slug);
     const created = await tx.workspace.create({
       data: {
         name: input.name,
         slug,
         description: input.description ?? null,
+        themeColorFrom: theme.themeColorFrom,
+        themeColorTo: theme.themeColorTo,
         ownerId: userId,
         settings: {
           create: {

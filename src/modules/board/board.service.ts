@@ -5,6 +5,10 @@ import {
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { prisma } from "../../database/prisma.js";
+import {
+  buildBoardCoverUrl,
+  resolveBoardCover,
+} from "../../common/visual-identity.js";
 import type { CreateBoardInput, UpdateBoardInput } from "./board.schema.js";
 
 function publicBoard(
@@ -15,6 +19,7 @@ function publicBoard(
     description: string | null;
     icon: string | null;
     color: string | null;
+    coverUrl?: string | null;
     position: number;
     isDefault: boolean;
     isArchived: boolean;
@@ -23,6 +28,7 @@ function publicBoard(
   },
   extras?: Record<string, unknown>,
 ) {
+  const visual = resolveBoardCover(board);
   return {
     id: board.id,
     projectId: board.projectId,
@@ -30,6 +36,7 @@ function publicBoard(
     description: board.description,
     icon: board.icon,
     color: board.color,
+    coverUrl: visual.coverUrl,
     position: board.position,
     isDefault: board.isDefault,
     isArchived: board.isArchived,
@@ -59,12 +66,15 @@ export async function createBoard(userId: string, input: CreateBoardInput) {
     _max: { position: true },
   });
 
+  const boardId = crypto.randomUUID();
   const board = await prisma.board.create({
     data: {
+      id: boardId,
       projectId: input.projectId,
       name: input.name,
       description: input.description ?? null,
       color: input.color ?? access.project.color,
+      coverUrl: buildBoardCoverUrl(boardId),
       icon: input.icon ?? null,
       position: (maxPos._max.position ?? -1) + 1,
       isDefault: false,
