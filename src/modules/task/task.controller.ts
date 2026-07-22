@@ -6,6 +6,7 @@ import { parseOrThrow } from "../../common/validation.js";
 import * as taskService from "./task.service.js";
 import {
   assignTaskSchema,
+  createProjectLabelSchema,
   createTaskSchema,
   labelTaskSchema,
   listTasksQuerySchema,
@@ -164,6 +165,38 @@ export async function listLabels(
     }
     const result = await taskService.listProjectLabels(req.user.id, projectId);
     return successResponse(res, { items: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createLabel(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(createProjectLabelSchema, req.body);
+    const result = await taskService.createProjectLabel(req.user.id, body);
+    return successResponse(res, result, "Label created", 201);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteLabelDef(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await taskService.deleteProjectLabel(
+      req.user.id,
+      param(req, "labelId"),
+    );
+    return successResponse(res, result, "Label deleted");
   } catch (error) {
     next(error);
   }

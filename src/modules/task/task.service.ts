@@ -15,6 +15,7 @@ import { AppError } from "../../common/app-error.js";
 import { notifyUser } from "../../common/notify.js";
 import { prisma } from "../../database/prisma.js";
 import type {
+  CreateProjectLabelInput,
   CreateTaskInput,
   MoveTaskInput,
   UpdateTaskInput,
@@ -691,4 +692,86 @@ export async function listProjectLabels(userId: string, projectId: string) {
     color: l.color,
     description: l.description,
   }));
+}
+
+function publicLabel(l: {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+}) {
+  return {
+    id: l.id,
+    name: l.name,
+    color: l.color,
+    description: l.description,
+  };
+}
+
+export async function createProjectLabel(
+  userId: string,
+  input: CreateProjectLabelInput,
+) {
+  await assertTaskAccess(userId, input.projectId, "task:update");
+
+  const existing = await prisma.projectLabel.findFirst({
+    where: {
+      projectId: input.projectId,
+      name: { equals: input.name, mode: "insensitive" },
+    },
+  });
+  if (existing) {
+    throw new AppError(
+      "A label with this name already exists in the project",
+      409,
+      "LABEL_EXISTS",
+    );
+  }
+
+  const label = await prisma.projectLabel.create({
+    data: {
+      projectId: input.projectId,
+      name: input.name,
+      color: input.color,
+      description: input.description ?? null,
+    },
+  });
+
+  let task = null as Awaited<ReturnType<typeof getTask>> | null;
+  if (input.taskId) {
+    const taskRow = await getTaskOrThrow(input.taskId);
+    if (taskRow.projectId !== input.projectId) {
+      throw new AppError(
+        "Task does not belong to this project",
+        400,
+        "VALIDATION_ERROR",
+      );
+    }
+    await prisma.taskLabel.upsert({
+      where: { taskId_labelId: { taskId: input.taskId, labelId: label.id } },
+      create: { taskId: input.taskId, labelId: label.id },
+      update: {},
+    });
+    task = await getTask(userId, input.taskId);
+  }
+
+  return { label: publicLabel(label), task };
+}
+
+export async function deleteProjectLabel(userId: string, labelId: string) {
+  const label = await prisma.projectLabel.findFirst({
+    where: { id: labelId },
+  });
+  if (!label) {
+    throw new AppError("Label not found", 404, "LABEL_NOT_FOUND");
+  }
+
+  await assertTaskAccess(userId, label.projectId, "task:update");
+
+  await prisma.$transaction([
+    prisma.taskLabel.deleteMany({ where: { labelId } }),
+    prisma.projectLabel.delete({ where: { id: labelId } }),
+  ]);
+
+  return { id: labelId, projectId: label.projectId };
 }
