@@ -57,6 +57,23 @@ export const labelTaskSchema = z.object({
   labelId: uuid("Label id"),
 });
 
+export const createProjectLabelSchema = z.object({
+  projectId: uuid("Project id"),
+  name: z
+    .string({ error: "Name is required" })
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name must be at most 100 characters"),
+  color: z
+    .string({ error: "Color is required" })
+    .trim()
+    .regex(/^#[0-9A-Fa-f]{6}$/, "Color must be a hex value like #EF4444"),
+  description: z.string().trim().max(500).optional().nullable(),
+  /** When set, also attaches the new label to this task. */
+  taskId: z.string().uuid().optional(),
+});
+
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type MoveTaskInput = z.infer<typeof moveTaskSchema>;
+export type CreateProjectLabelInput = z.infer<typeof createProjectLabelSchema>;
