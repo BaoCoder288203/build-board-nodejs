@@ -3,6 +3,7 @@ import { AppError } from "../../common/app-error.js";
 import { clearAuthCookies, setAuthCookies } from "../../common/cookies.js";
 import { successResponse } from "../../common/response.js";
 import { parseOrThrow } from "../../common/validation.js";
+import { requireUploadedFile } from "../../middleware/upload.js";
 import * as authService from "./auth.service.js";
 import {
   changePasswordSchema,
@@ -12,6 +13,7 @@ import {
   registerSchema,
   resendVerificationSchema,
   resetPasswordSchema,
+  updateProfileSchema,
   verifyEmailSchema,
 } from "./auth.schema.js";
 
@@ -159,6 +161,40 @@ export async function me(req: Request, res: Response, next: NextFunction) {
     }
     const user = await authService.getMe(req.user.id);
     return successResponse(res, user);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateProfile(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) {
+      throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    }
+    const body = parseOrThrow(updateProfileSchema, req.body);
+    const user = await authService.updateProfile(req.user.id, body);
+    return successResponse(res, user, "Profile updated");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function uploadAvatar(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) {
+      throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    }
+    const file = requireUploadedFile(req.file);
+    const user = await authService.uploadAvatar(req.user.id, file);
+    return successResponse(res, user, "Avatar updated");
   } catch (error) {
     next(error);
   }

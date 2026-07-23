@@ -2,6 +2,7 @@ import * as argon2 from "argon2";
 import { ActivityAction } from "@prisma/client";
 import type { Request } from "express";
 import { AppError } from "../../common/app-error.js";
+import { uploadBuffer } from "../../common/storage.js";
 import { env } from "../../config/env.js";
 import { prisma } from "../../database/prisma.js";
 import { logAuthActivity } from "../activity/activity.service.js";
@@ -17,7 +18,7 @@ import {
   hashToken,
   signAccessToken,
 } from "../../utils/token.js";
-import type { LoginInput, RegisterInput } from "./auth.schema.js";
+import type { LoginInput, RegisterInput, UpdateProfileInput } from "./auth.schema.js";
 
 function publicUser(user: {
   id: string;
@@ -389,6 +390,70 @@ export async function getMe(userId: string) {
     throw new AppError("User not found", 404, "USER_NOT_FOUND");
   }
   return publicUser(user);
+}
+
+export async function updateProfile(userId: string, input: UpdateProfileInput) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.deletedAt) {
+    throw new AppError("User not found", 404, "USER_NOT_FOUND");
+  }
+
+  if (input.username && input.username.toLowerCase() !== user.username.toLowerCase()) {
+    const taken = await prisma.user.findFirst({
+      where: {
+        username: { equals: input.username, mode: "insensitive" },
+        NOT: { id: userId },
+      },
+    });
+    if (taken) {
+      throw new AppError("Username is already taken", 409, "USERNAME_TAKEN");
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
+      ...(input.username !== undefined ? { username: input.username } : {}),
+      ...(input.avatar !== undefined ? { avatarUrl: input.avatar } : {}),
+      ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+      ...(input.language !== undefined ? { language: input.language } : {}),
+    },
+  });
+
+  return publicUser(updated);
+}
+
+export async function uploadAvatar(
+  userId: string,
+  file: Express.Multer.File,
+) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.deletedAt) {
+    throw new AppError("User not found", 404, "USER_NOT_FOUND");
+  }
+
+  const mime = file.mimetype || "application/octet-stream";
+  if (!mime.startsWith("image/")) {
+    throw new AppError(
+      "Avatar must be an image (JPEG, PNG, WebP, or GIF)",
+      400,
+      "UNSUPPORTED_FILE_TYPE",
+    );
+  }
+
+  const uploaded = await uploadBuffer({
+    buffer: file.buffer,
+    originalName: file.originalname || "avatar.jpg",
+    mimeType: mime,
+  });
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { avatarUrl: uploaded.fileUrl },
+  });
+
+  return publicUser(updated);
 }
 
 export function requestMeta(req: Request) {

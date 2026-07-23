@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth.js";
+import { uploadSingle } from "../../middleware/upload.js";
 import * as authController from "./auth.controller.js";
 
 export const authRouter = Router();
@@ -15,3 +16,10 @@ authRouter.post("/forgot-password", authController.forgotPassword);
 authRouter.post("/reset-password", authController.resetPassword);
 authRouter.patch("/change-password", requireAuth, authController.changePassword);
 authRouter.get("/me", requireAuth, authController.me);
+authRouter.patch("/me", requireAuth, authController.updateProfile);
+authRouter.post(
+  "/me/avatar",
+  requireAuth,
+  uploadSingle,
+  authController.uploadAvatar,
+);
