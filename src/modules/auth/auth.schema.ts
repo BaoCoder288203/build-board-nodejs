@@ -66,5 +66,34 @@ export const changePasswordSchema = z.object({
   newPassword: passwordSchema,
 });
 
+export const updateProfileSchema = z.object({
+  fullName: z
+    .string()
+    .trim()
+    .min(2, "Full name must be at least 2 characters")
+    .max(100, "Full name must be at most 100 characters")
+    .optional(),
+  username: z
+    .string()
+    .trim()
+    .min(3, "Username must be at least 3 characters")
+    .max(100, "Username must be at most 100 characters")
+    .regex(
+      /^[a-zA-Z0-9._-]+$/,
+      "Username may only contain letters, numbers, dots, underscores, and hyphens",
+    )
+    .optional(),
+  avatar: z
+    .string()
+    .trim()
+    .url("Avatar must be a valid URL")
+    .max(2000)
+    .nullable()
+    .optional(),
+  timezone: z.string().trim().max(100).nullable().optional(),
+  language: z.string().trim().max(20).nullable().optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
