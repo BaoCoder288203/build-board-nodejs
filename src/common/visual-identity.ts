@@ -33,7 +33,9 @@ function hashSeed(seed: string): number {
 }
 
 export function pickWorkspaceTheme(seed: string) {
-  const palette = WORKSPACE_PALETTES[hashSeed(seed) % WORKSPACE_PALETTES.length];
+  const palette =
+    WORKSPACE_PALETTES[hashSeed(seed) % WORKSPACE_PALETTES.length] ??
+    WORKSPACE_PALETTES[0]!;
   return { themeColorFrom: palette.from, themeColorTo: palette.to };
 }
 
@@ -50,7 +52,9 @@ export function buildBoardCoverUrl(
   width = 640,
   height = 360,
 ): string {
-  const seedBase = NATURE_COVER_SEEDS[hashSeed(boardId) % NATURE_COVER_SEEDS.length];
+  const seedBase =
+    NATURE_COVER_SEEDS[hashSeed(boardId) % NATURE_COVER_SEEDS.length] ??
+    NATURE_COVER_SEEDS[0]!;
   const seed = `${seedBase}-${boardId}`;
   return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${width}/${height}`;
 }
