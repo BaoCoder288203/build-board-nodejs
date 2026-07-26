@@ -1,3 +1,8 @@
+# Project name intentionally not "build-board-nodejs": an old corrupted
+# mailpit container (bda379568e2c) still appears under that project label in
+# Docker Desktop and breaks `compose up` recreate for mailpit.
+name: buildboard
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -40,5 +45,10 @@ services:
       - "8025:8025"
 
 volumes:
+  # Reuse existing local data volumes from the previous project name.
   postgres_data:
+    name: build-board-nodejs_postgres_data
+    external: true
   redis_data:
+    name: build-board-nodejs_redis_data
+    external: true
