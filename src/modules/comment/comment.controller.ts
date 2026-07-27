@@ -7,6 +7,7 @@ import * as commentService from "./comment.service.js";
 import {
   createCommentSchema,
   listCommentsQuerySchema,
+  reactionSchema,
   replyCommentSchema,
   updateCommentSchema,
 } from "./comment.schema.js";
@@ -88,6 +89,45 @@ export async function listReplies(
       param(req, "commentId"),
     );
     return successResponse(res, result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function addReaction(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(reactionSchema, req.body);
+    const result = await commentService.toggleReaction(
+      req.user.id,
+      param(req, "commentId"),
+      body.emoji,
+    );
+    return successResponse(res, result, "Reaction updated");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function removeReaction(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const emoji = decodeURIComponent(param(req, "emoji"));
+    const body = parseOrThrow(reactionSchema, { emoji });
+    const result = await commentService.removeReaction(
+      req.user.id,
+      param(req, "commentId"),
+      body.emoji,
+    );
+    return successResponse(res, result, "Reaction removed");
   } catch (error) {
     next(error);
   }

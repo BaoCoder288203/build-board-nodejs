@@ -9,8 +9,10 @@ import { boardRouter } from "../modules/board/board.routes.js";
 import { checklistRouter } from "../modules/checklist/checklist.routes.js";
 import { columnRouter } from "../modules/column/column.routes.js";
 import { commentRouter } from "../modules/comment/comment.routes.js";
+import { dashboardRouter } from "../modules/dashboard/dashboard.routes.js";
 import { notificationRouter } from "../modules/notification/notification.routes.js";
 import { projectRouter } from "../modules/project/project.routes.js";
+import { searchRouter } from "../modules/search/search.routes.js";
 import { taskRouter } from "../modules/task/task.routes.js";
 import { workspaceRouter } from "../modules/workspace/workspace.routes.js";
 
@@ -45,3 +47,5 @@ router.use("/comments", commentRouter);
 router.use("/attachments", attachmentRouter);
 router.use("/notifications", notificationRouter);
 router.use("/activities", activityRouter);
+router.use("/dashboard", dashboardRouter);
+router.use("/search", searchRouter);

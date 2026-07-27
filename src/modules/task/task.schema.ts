@@ -57,6 +57,14 @@ export const labelTaskSchema = z.object({
   labelId: uuid("Label id"),
 });
 
+export const pinTaskSchema = z.object({
+  pinned: z.boolean(),
+});
+
+export const duplicateTaskSchema = z.object({
+  destinationColumnId: z.string().uuid().optional(),
+});
+
 export const createProjectLabelSchema = z.object({
   projectId: uuid("Project id"),
   name: z
@@ -77,3 +85,5 @@ export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type MoveTaskInput = z.infer<typeof moveTaskSchema>;
 export type CreateProjectLabelInput = z.infer<typeof createProjectLabelSchema>;
+export type PinTaskInput = z.infer<typeof pinTaskSchema>;
+export type DuplicateTaskInput = z.infer<typeof duplicateTaskSchema>;

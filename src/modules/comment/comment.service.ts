@@ -18,6 +18,7 @@ import type {
   ReplyCommentInput,
   UpdateCommentInput,
 } from "./comment.schema.js";
+import { ALLOWED_COMMENT_EMOJIS } from "./comment.schema.js";
 
 const authorInclude = {
   author: {
@@ -51,11 +52,41 @@ const authorInclude = {
       },
     },
   },
+  reactions: {
+    select: {
+      emoji: true,
+      workspaceMemberId: true,
+    },
+  },
 } satisfies Prisma.CommentInclude;
 
 type CommentRow = Prisma.CommentGetPayload<{ include: typeof authorInclude }>;
 
-function publicComment(comment: CommentRow, replyCount = 0) {
+function aggregateReactions(
+  reactions: Array<{ emoji: string; workspaceMemberId: string }>,
+  viewerMemberId?: string,
+) {
+  const map = new Map<string, { emoji: string; count: number; reactedByMe: boolean }>();
+  for (const reaction of reactions) {
+    const current = map.get(reaction.emoji) ?? {
+      emoji: reaction.emoji,
+      count: 0,
+      reactedByMe: false,
+    };
+    current.count += 1;
+    if (viewerMemberId && reaction.workspaceMemberId === viewerMemberId) {
+      current.reactedByMe = true;
+    }
+    map.set(reaction.emoji, current);
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+}
+
+function publicComment(
+  comment: CommentRow,
+  replyCount = 0,
+  viewerMemberId?: string,
+) {
   return {
     id: comment.id,
     commentId: comment.id,
@@ -88,6 +119,7 @@ function publicComment(comment: CommentRow, replyCount = 0) {
         avatar: m.workspaceMember.user.avatarUrl,
       },
     })),
+    reactions: aggregateReactions(comment.reactions, viewerMemberId),
   };
 }
 
@@ -268,16 +300,22 @@ async function createCommentRecord(options: {
       });
     }
   } else {
-    // Top-level comment: notify task assignees (except author)
-    const assignees = await prisma.taskAssignment.findMany({
-      where: { taskId: task.id },
-      include: { workspaceMember: { select: { userId: true } } },
-    });
-    const recipientIds = new Set(
-      assignees
-        .map((a) => a.workspaceMember.userId)
-        .filter((id) => id !== userId),
-    );
+    // Top-level comment: notify task assignees + watchers (except author)
+    const [assignees, watchers] = await Promise.all([
+      prisma.taskAssignment.findMany({
+        where: { taskId: task.id },
+        include: { workspaceMember: { select: { userId: true } } },
+      }),
+      prisma.taskWatcher.findMany({
+        where: { taskId: task.id },
+        include: { workspaceMember: { select: { userId: true } } },
+      }),
+    ]);
+    const recipientIds = new Set([
+      ...assignees.map((a) => a.workspaceMember.userId),
+      ...watchers.map((w) => w.workspaceMember.userId),
+    ]);
+    recipientIds.delete(userId);
     for (const recipientId of recipientIds) {
       await notifyUser({
         workspaceId: task.workspaceId,
@@ -293,7 +331,7 @@ async function createCommentRecord(options: {
     }
   }
 
-  return publicComment(created, 0);
+  return publicComment(created, 0, membership.member.id);
 }
 
 export async function createComment(userId: string, input: CreateCommentInput) {
@@ -312,6 +350,7 @@ export async function listComments(
 ) {
   const task = await getTaskOrThrow(query.taskId);
   await assertTaskAccess(userId, task.projectId);
+  const membership = await getWorkspaceMembership(userId, task.workspaceId);
 
   const where: Prisma.CommentWhereInput = {
     taskId: query.taskId,
@@ -339,7 +378,9 @@ export async function listComments(
   ]);
 
   return {
-    items: rows.map((c) => publicComment(c, c._count.replies)),
+    items: rows.map((c) =>
+      publicComment(c, c._count.replies, membership.member.id),
+    ),
     page: query.page,
     limit: query.limit,
     total,
@@ -415,7 +456,7 @@ export async function updateComment(
     where: { parentCommentId: commentId, deletedAt: null },
   });
 
-  return publicComment(updated, replyCount);
+  return publicComment(updated, replyCount, membership.member.id);
 }
 
 export async function deleteComment(userId: string, commentId: string) {
@@ -482,6 +523,10 @@ export async function replyToComment(
 export async function listReplies(userId: string, parentCommentId: string) {
   const parent = await getCommentOrThrow(parentCommentId);
   await assertTaskAccess(userId, parent.task.projectId);
+  const membership = await getWorkspaceMembership(
+    userId,
+    parent.task.workspaceId,
+  );
 
   const rows = await prisma.comment.findMany({
     where: {
@@ -492,5 +537,91 @@ export async function listReplies(userId: string, parentCommentId: string) {
     include: authorInclude,
   });
 
-  return { items: rows.map((c) => publicComment(c, 0)) };
+  return {
+    items: rows.map((c) => publicComment(c, 0, membership.member.id)),
+  };
+}
+
+async function getPublicCommentForViewer(userId: string, commentId: string) {
+  const comment = await getCommentOrThrow(commentId);
+  const membership = await getWorkspaceMembership(
+    userId,
+    comment.task.workspaceId,
+  );
+  const replyCount = await prisma.comment.count({
+    where: { parentCommentId: commentId, deletedAt: null },
+  });
+  return publicComment(comment, replyCount, membership.member.id);
+}
+
+export async function toggleReaction(
+  userId: string,
+  commentId: string,
+  emoji: string,
+) {
+  if (
+    !(ALLOWED_COMMENT_EMOJIS as readonly string[]).includes(emoji)
+  ) {
+    throw new AppError("Unsupported emoji reaction", 400, "VALIDATION_ERROR");
+  }
+
+  const comment = await getCommentOrThrow(commentId);
+  await assertTaskAccess(userId, comment.task.projectId, "task:update");
+  const membership = await getWorkspaceMembership(
+    userId,
+    comment.task.workspaceId,
+  );
+
+  const existing = await prisma.commentReaction.findUnique({
+    where: {
+      commentId_workspaceMemberId_emoji: {
+        commentId,
+        workspaceMemberId: membership.member.id,
+        emoji,
+      },
+    },
+  });
+
+  if (existing) {
+    await prisma.commentReaction.delete({ where: { id: existing.id } });
+  } else {
+    await prisma.commentReaction.create({
+      data: {
+        commentId,
+        workspaceMemberId: membership.member.id,
+        emoji,
+      },
+    });
+  }
+
+  return getPublicCommentForViewer(userId, commentId);
+}
+
+export async function removeReaction(
+  userId: string,
+  commentId: string,
+  emoji: string,
+) {
+  if (
+    !(ALLOWED_COMMENT_EMOJIS as readonly string[]).includes(emoji)
+  ) {
+    throw new AppError("Unsupported emoji reaction", 400, "VALIDATION_ERROR");
+  }
+
+  const comment = await getCommentOrThrow(commentId);
+  await assertTaskAccess(userId, comment.task.projectId, "task:update");
+  const membership = await getWorkspaceMembership(
+    userId,
+    comment.task.workspaceId,
+  );
+
+  await prisma.commentReaction.deleteMany({
+    where: {
+      commentId,
+      workspaceMemberId: membership.member.id,
+      emoji,
+    },
+  });
+
+  return getPublicCommentForViewer(userId, commentId);
 }

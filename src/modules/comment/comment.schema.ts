@@ -3,6 +3,15 @@ import { z } from "zod";
 const uuid = (label: string) =>
   z.string({ error: `${label} is required` }).uuid(`${label} must be a valid UUID`);
 
+export const ALLOWED_COMMENT_EMOJIS = [
+  "👍",
+  "❤️",
+  "😄",
+  "🎉",
+  "👀",
+  "🔥",
+] as const;
+
 export const createCommentSchema = z.object({
   taskId: uuid("Task id"),
   content: z
@@ -38,6 +47,13 @@ export const listCommentsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+export const reactionSchema = z.object({
+  emoji: z.enum(ALLOWED_COMMENT_EMOJIS, {
+    error: "Unsupported emoji reaction",
+  }),
+});
+
 export type CreateCommentInput = z.infer<typeof createCommentSchema>;
 export type UpdateCommentInput = z.infer<typeof updateCommentSchema>;
 export type ReplyCommentInput = z.infer<typeof replyCommentSchema>;
+export type ReactionInput = z.infer<typeof reactionSchema>;

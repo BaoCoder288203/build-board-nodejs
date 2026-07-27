@@ -582,6 +582,7 @@ model Task {
   estimatedHours Decimal?     @map("estimated_hours") @db.Decimal(10, 2)
   actualHours    Decimal?     @map("actual_hours") @db.Decimal(10, 2)
   coverImage     String?      @map("cover_image") @db.Text
+  isPinned       Boolean      @default(false) @map("is_pinned")
   position       Int          @default(0)
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
@@ -615,6 +616,7 @@ model Task {
   @@index([workspaceId, dueDate])
   @@index([projectId, status])
   @@index([columnId, position])
+  @@index([columnId, isPinned])
   @@map("tasks")
 }
 

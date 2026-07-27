@@ -12,3 +12,8 @@ commentRouter.patch("/:commentId", commentController.update);
 commentRouter.delete("/:commentId", commentController.remove);
 commentRouter.post("/:commentId/replies", commentController.reply);
 commentRouter.get("/:commentId/replies", commentController.listReplies);
+commentRouter.post("/:commentId/reactions", commentController.addReaction);
+commentRouter.delete(
+  "/:commentId/reactions/:emoji",
+  commentController.removeReaction,
+);
