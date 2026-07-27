@@ -45,11 +45,20 @@ const taskCardInclude = {
       },
     },
   },
+  watchers: {
+    select: {
+      workspaceMemberId: true,
+    },
+  },
 } satisfies Prisma.TaskInclude;
 
 function publicTask(
   task: Prisma.TaskGetPayload<{ include: typeof taskCardInclude }>,
+  viewerWorkspaceMemberId?: string,
 ) {
+  const isWatching = viewerWorkspaceMemberId
+    ? task.watchers.some((w) => w.workspaceMemberId === viewerWorkspaceMemberId)
+    : false;
   return {
     id: task.id,
     taskId: task.id,
@@ -66,6 +75,9 @@ function publicTask(
     dueDate: task.dueDate,
     completedAt: task.completedAt,
     coverImage: task.coverImage,
+    isPinned: task.isPinned,
+    isWatching,
+    watchersCount: task.watchers.length,
     position: task.position,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
@@ -114,6 +126,46 @@ async function assertTaskAccess(
     assertPermission(access.workspaceCtx, permission);
   }
   return access;
+}
+
+async function notifyTaskWatchers(input: {
+  taskId: string;
+  workspaceId: string;
+  actorId: string;
+  entityId: string;
+  notificationType: NotificationType;
+  title: string;
+  message: string;
+  metadata?: Prisma.InputJsonValue;
+}) {
+  const watchers = await prisma.taskWatcher.findMany({
+    where: { taskId: input.taskId },
+    include: {
+      workspaceMember: {
+        select: { userId: true },
+      },
+    },
+  });
+  const recipients = [
+    ...new Set(
+      watchers
+        .map((w) => w.workspaceMember.userId)
+        .filter((userId) => userId !== input.actorId),
+    ),
+  ];
+  for (const recipientId of recipients) {
+    await notifyUser({
+      workspaceId: input.workspaceId,
+      recipientId,
+      senderId: input.actorId,
+      entityType: NotificationEntityType.TASK,
+      entityId: input.entityId,
+      notificationType: input.notificationType,
+      title: input.title,
+      message: input.message,
+      metadata: input.metadata,
+    });
+  }
 }
 
 async function nextTaskCode(projectId: string) {
@@ -251,7 +303,7 @@ export async function createTask(userId: string, input: CreateTaskInput) {
     return created;
   });
 
-  return publicTask(task);
+  return publicTask(task, access.workspaceCtx.member.id);
 }
 
 export async function listTasks(
@@ -284,7 +336,7 @@ export async function listTasks(
     throw new AppError("projectId is required", 400, "VALIDATION_ERROR");
   }
 
-  await assertTaskAccess(userId, projectId);
+  const access = await assertTaskAccess(userId, projectId);
 
   const where: Prisma.TaskWhereInput = {
     projectId,
@@ -310,13 +362,13 @@ export async function listTasks(
       where,
       skip,
       take: query.limit,
-      orderBy: [{ columnId: "asc" }, { position: "asc" }],
+      orderBy: [{ columnId: "asc" }, { isPinned: "desc" }, { position: "asc" }],
       include: taskCardInclude,
     }),
   ]);
 
   return {
-    items: rows.map(publicTask),
+    items: rows.map((row) => publicTask(row, access.workspaceCtx.member.id)),
     page: query.page,
     limit: query.limit,
     total,
@@ -326,8 +378,8 @@ export async function listTasks(
 
 export async function getTask(userId: string, taskId: string) {
   const task = await getTaskOrThrow(taskId);
-  await assertTaskAccess(userId, task.projectId);
-  return publicTask(task);
+  const access = await assertTaskAccess(userId, task.projectId);
+  return publicTask(task, access.workspaceCtx.member.id);
 }
 
 export async function updateTask(
@@ -336,7 +388,7 @@ export async function updateTask(
   input: UpdateTaskInput,
 ) {
   const existing = await getTaskOrThrow(taskId);
-  await assertTaskAccess(userId, existing.projectId, "task:update");
+  const access = await assertTaskAccess(userId, existing.projectId, "task:update");
 
   const nextStatus = input.status as TaskStatus | undefined;
   const updated = await prisma.task.update({
@@ -380,7 +432,38 @@ export async function updateTask(
     },
   });
 
-  return publicTask(updated);
+  if (nextStatus && nextStatus !== existing.status) {
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true },
+    });
+    const actorName = actor?.fullName ?? "Someone";
+    if (nextStatus === TaskStatus.DONE) {
+      await notifyTaskWatchers({
+        taskId,
+        workspaceId: existing.workspaceId,
+        actorId: userId,
+        entityId: taskId,
+        notificationType: NotificationType.TASK_COMPLETED,
+        title: "Task completed",
+        message: `${actorName} marked “${existing.title}” as done.`,
+        metadata: { taskId, boardId: existing.boardId },
+      });
+    } else if (existing.status === TaskStatus.DONE) {
+      await notifyTaskWatchers({
+        taskId,
+        workspaceId: existing.workspaceId,
+        actorId: userId,
+        entityId: taskId,
+        notificationType: NotificationType.SYSTEM,
+        title: "Task reopened",
+        message: `${actorName} reopened “${existing.title}”.`,
+        metadata: { taskId, boardId: existing.boardId },
+      });
+    }
+  }
+
+  return publicTask(updated, access.workspaceCtx.member.id);
 }
 
 export async function deleteTask(userId: string, taskId: string) {
@@ -666,6 +749,214 @@ export async function addTaskLabel(
   });
 
   return getTask(userId, taskId);
+}
+
+export async function watchTask(userId: string, taskId: string) {
+  const task = await getTaskOrThrow(taskId);
+  const access = await assertTaskAccess(userId, task.projectId, "task:update");
+  const workspaceMemberId = access.workspaceCtx.member.id;
+
+  await prisma.taskWatcher.upsert({
+    where: { taskId_workspaceMemberId: { taskId, workspaceMemberId } },
+    create: { taskId, workspaceMemberId },
+    update: {},
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.TASK,
+      entityId: taskId,
+      action: ActivityAction.UPDATE,
+      afterData: { watch: true },
+    },
+  });
+
+  return getTask(userId, taskId);
+}
+
+export async function unwatchTask(userId: string, taskId: string) {
+  const task = await getTaskOrThrow(taskId);
+  const access = await assertTaskAccess(userId, task.projectId, "task:update");
+  const workspaceMemberId = access.workspaceCtx.member.id;
+
+  await prisma.taskWatcher.deleteMany({
+    where: {
+      taskId,
+      workspaceMemberId,
+    },
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.TASK,
+      entityId: taskId,
+      action: ActivityAction.UPDATE,
+      afterData: { watch: false },
+    },
+  });
+
+  return getTask(userId, taskId);
+}
+
+export async function pinTask(userId: string, taskId: string, pinned: boolean) {
+  const task = await getTaskOrThrow(taskId);
+  const access = await assertTaskAccess(userId, task.projectId, "task:update");
+  const updated = await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      isPinned: pinned,
+      updatedBy: userId,
+    },
+    include: taskCardInclude,
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.TASK,
+      entityId: taskId,
+      action: ActivityAction.UPDATE,
+      beforeData: { isPinned: task.isPinned },
+      afterData: { isPinned: pinned },
+    },
+  });
+
+  return publicTask(updated, access.workspaceCtx.member.id);
+}
+
+export async function duplicateTask(
+  userId: string,
+  taskId: string,
+  destinationColumnId?: string,
+) {
+  const sourceTask = await getTaskOrThrow(taskId);
+  const access = await assertTaskAccess(userId, sourceTask.projectId, "task:create");
+  const targetColumnId = destinationColumnId ?? sourceTask.columnId;
+
+  if (destinationColumnId) {
+    const targetColumn = await getColumnContext(destinationColumnId);
+    if (targetColumn.boardId !== sourceTask.boardId) {
+      throw new AppError(
+        "Destination column must belong to the same board",
+        400,
+        "INVALID_MOVE",
+      );
+    }
+  }
+
+  const [sourceChecklists, maxPos, code] = await Promise.all([
+    prisma.checklist.findMany({
+      where: { taskId, deletedAt: null },
+      orderBy: { position: "asc" },
+      include: {
+        items: {
+          where: { deletedAt: null },
+          orderBy: { position: "asc" },
+        },
+      },
+    }),
+    prisma.task.aggregate({
+      where: { columnId: targetColumnId, deletedAt: null },
+      _max: { position: true },
+    }),
+    nextTaskCode(sourceTask.projectId),
+  ]);
+
+  const duplicated = await prisma.$transaction(async (tx) => {
+    const created = await tx.task.create({
+      data: {
+        workspaceId: sourceTask.workspaceId,
+        projectId: sourceTask.projectId,
+        boardId: sourceTask.boardId,
+        columnId: targetColumnId,
+        createdBy: userId,
+        updatedBy: userId,
+        code,
+        title: `${sourceTask.title} (Copy)`,
+        description: sourceTask.description,
+        priority: sourceTask.priority,
+        status: sourceTask.status,
+        startDate: sourceTask.startDate,
+        dueDate: sourceTask.dueDate,
+        completedAt: sourceTask.completedAt,
+        estimatedHours: sourceTask.estimatedHours,
+        actualHours: sourceTask.actualHours,
+        coverImage: sourceTask.coverImage,
+        position: (maxPos._max.position ?? -1) + 1,
+        isPinned: false,
+        assignments: sourceTask.assignments.length
+          ? {
+              create: sourceTask.assignments.map((a) => ({
+                workspaceMemberId: a.workspaceMemberId,
+                assignedBy: userId,
+              })),
+            }
+          : undefined,
+        labels: sourceTask.labels.length
+          ? {
+              create: sourceTask.labels.map((l) => ({
+                labelId: l.labelId,
+              })),
+            }
+          : undefined,
+      },
+      include: taskCardInclude,
+    });
+
+    for (const checklist of sourceChecklists) {
+      const createdChecklist = await tx.checklist.create({
+        data: {
+          taskId: created.id,
+          title: checklist.title,
+          position: checklist.position,
+          createdBy: userId,
+        },
+      });
+      if (checklist.items.length) {
+        await tx.checklistItem.createMany({
+          data: checklist.items.map((item) => ({
+            checklistId: createdChecklist.id,
+            title: item.title,
+            isCompleted: false,
+            position: item.position,
+          })),
+        });
+      }
+    }
+
+    await tx.taskPosition.create({
+      data: {
+        taskId: created.id,
+        columnId: targetColumnId,
+        position: created.position,
+        movedBy: userId,
+      },
+    });
+
+    await tx.activity.create({
+      data: {
+        workspaceId: sourceTask.workspaceId,
+        projectId: sourceTask.projectId,
+        actorId: userId,
+        entityType: ActivityEntityType.TASK,
+        entityId: created.id,
+        action: ActivityAction.CREATE,
+        afterData: { title: created.title, code: created.code, duplicatedFrom: taskId },
+      },
+    });
+
+    return created;
+  });
+
+  return publicTask(duplicated, access.workspaceCtx.member.id);
 }
 
 export async function removeTaskLabel(

@@ -8,9 +8,11 @@ import {
   assignTaskSchema,
   createProjectLabelSchema,
   createTaskSchema,
+  duplicateTaskSchema,
   labelTaskSchema,
   listTasksQuerySchema,
   moveTaskSchema,
+  pinTaskSchema,
   updateTaskSchema,
 } from "./task.schema.js";
 
@@ -114,6 +116,59 @@ export async function unassign(req: Request, res: Response, next: NextFunction) 
       body.userId,
     );
     return successResponse(res, result, "Assignee removed");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function watch(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await taskService.watchTask(req.user.id, param(req, "taskId"));
+    return successResponse(res, result, "Watching task");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function unwatch(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await taskService.unwatchTask(
+      req.user.id,
+      param(req, "taskId"),
+    );
+    return successResponse(res, result, "Stopped watching task");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function pin(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(pinTaskSchema, req.body);
+    const result = await taskService.pinTask(
+      req.user.id,
+      param(req, "taskId"),
+      body.pinned,
+    );
+    return successResponse(res, result, body.pinned ? "Task pinned" : "Task unpinned");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function duplicate(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(duplicateTaskSchema, req.body ?? {});
+    const result = await taskService.duplicateTask(
+      req.user.id,
+      param(req, "taskId"),
+      body.destinationColumnId,
+    );
+    return successResponse(res, result, "Task duplicated", 201);
   } catch (error) {
     next(error);
   }

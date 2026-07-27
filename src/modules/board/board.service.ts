@@ -189,6 +189,11 @@ export async function getBoard(userId: string, boardId: string) {
                   },
                 },
               },
+              watchers: {
+                select: {
+                  workspaceMemberId: true,
+                },
+              },
               checklists: {
                 where: { deletedAt: null },
                 select: {
@@ -218,7 +223,7 @@ export async function getBoard(userId: string, boardId: string) {
     throw new AppError("Board not found", 404, "BOARD_NOT_FOUND");
   }
 
-  await getAccessibleProject(userId, board.projectId);
+  const access = await getAccessibleProject(userId, board.projectId);
 
   return publicBoard(board, {
     project: board.project,
@@ -234,7 +239,13 @@ export async function getBoard(userId: string, boardId: string) {
       isDefault: c.isDefault,
       isDone: c.isDone,
       tasksCount: c.tasks.length,
-      tasks: c.tasks.map((t) => {
+      tasks: c.tasks
+        .slice()
+        .sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          return a.position - b.position;
+        })
+        .map((t) => {
         const checklistItems = t.checklists.flatMap((cl) => cl.items);
         const checklistTotal = checklistItems.length;
         const checklistCompleted = checklistItems.filter(
@@ -250,6 +261,11 @@ export async function getBoard(userId: string, boardId: string) {
           priority: t.priority,
           status: t.status,
           dueDate: t.dueDate,
+          isPinned: t.isPinned,
+          isWatching: t.watchers.some(
+            (w) => w.workspaceMemberId === access.workspaceCtx.member.id,
+          ),
+          watchersCount: t.watchers.length,
           position: t.position,
           createdAt: t.createdAt,
           assignees: t.assignments.map((a) => ({
