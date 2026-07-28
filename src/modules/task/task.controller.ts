@@ -8,6 +8,7 @@ import { getRealtimeNamespace } from "../../realtime/socket.js";
 import * as taskService from "./task.service.js";
 import {
   assignTaskSchema,
+  calendarTasksQuerySchema,
   createProjectLabelSchema,
   createTaskSchema,
   duplicateTaskSchema,
@@ -37,6 +38,11 @@ function emitTaskUpdated(
     updatedBy: userId,
     occurredAt: new Date().toISOString(),
   });
+  rt.to(`workspace:${task.workspaceId}`).emit(SERVER_EVENT.TASK_UPDATED, {
+    task,
+    updatedBy: userId,
+    occurredAt: new Date().toISOString(),
+  });
 }
 
 function emitTaskCreated(
@@ -54,6 +60,11 @@ function emitTaskCreated(
   const rt = getRealtimeNamespace();
   if (!rt) return;
   rt.to(`board:${task.boardId}`).emit(SERVER_EVENT.TASK_CREATED, {
+    task,
+    updatedBy: userId,
+    occurredAt: new Date().toISOString(),
+  });
+  rt.to(`workspace:${task.workspaceId}`).emit(SERVER_EVENT.TASK_CREATED, {
     task,
     updatedBy: userId,
     occurredAt: new Date().toISOString(),
@@ -77,6 +88,17 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const query = parseOrThrow(listTasksQuerySchema, req.query);
     const result = await taskService.listTasks(req.user.id, query);
+    return successResponse(res, result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function calendar(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const query = parseOrThrow(calendarTasksQuerySchema, req.query);
+    const result = await taskService.listCalendarTasks(req.user.id, query);
     return successResponse(res, result);
   } catch (error) {
     next(error);
@@ -125,6 +147,13 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
         deletedBy: req.user.id,
         occurredAt: new Date().toISOString(),
       });
+      rt.to(`workspace:${result.workspaceId}`).emit(SERVER_EVENT.TASK_DELETED, {
+        taskId: result.taskId,
+        boardId: result.boardId,
+        workspaceId: result.workspaceId,
+        deletedBy: req.user.id,
+        occurredAt: new Date().toISOString(),
+      });
     }
     return successResponse(res, null, result.message);
   } catch (error) {
@@ -145,6 +174,16 @@ export async function move(req: Request, res: Response, next: NextFunction) {
     const rt = getRealtimeNamespace();
     if (rt) {
       rt.to(`board:${result.boardId}`).emit(SERVER_EVENT.TASK_MOVED, {
+        taskId: result.id,
+        boardId: result.boardId,
+        workspaceId: result.workspaceId,
+        sourceColumnId: body.sourceColumnId ?? result.columnId,
+        destinationColumnId: result.columnId,
+        newPosition: result.position,
+        movedBy: req.user.id,
+        occurredAt: new Date().toISOString(),
+      });
+      rt.to(`workspace:${result.workspaceId}`).emit(SERVER_EVENT.TASK_MOVED, {
         taskId: result.id,
         boardId: result.boardId,
         workspaceId: result.workspaceId,

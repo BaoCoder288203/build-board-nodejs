@@ -24,6 +24,7 @@ export const SERVER_EVENT = {
   COMMENT_UPDATED: "comment:updated",
   COMMENT_DELETED: "comment:deleted",
   COMMENT_REACTION: "comment:reaction",
+  NOTIFICATION_NEW: "notification:new",
 } as const;
 
 export const roomKindSchema = z.enum(["workspace", "board", "task"]);
@@ -181,3 +182,35 @@ export type CommentDeletedPayload = {
   actorId: string;
   occurredAt: string;
 };
+
+export type NotificationRealtimeItem = {
+  id: string;
+  notificationId: string;
+  workspaceId: string;
+  recipientId: string;
+  senderId: string | null;
+  entityType: string;
+  entityId: string;
+  notificationType: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  readAt: string | null;
+  metadata: unknown;
+  createdAt: string;
+  sender: {
+    id: string;
+    fullName: string;
+    email: string;
+    avatar: string | null;
+  } | null;
+};
+
+export type NotificationNewPayload = {
+  notification: NotificationRealtimeItem;
+  occurredAt: string;
+};
+
+export function userRoom(userId: string) {
+  return `user:${userId}`;
+}

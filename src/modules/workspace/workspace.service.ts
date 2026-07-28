@@ -15,6 +15,7 @@ import {
 import { env } from "../../config/env.js";
 import { prisma } from "../../database/prisma.js";
 import { sendEmail } from "../../providers/email.provider.js";
+import { emitNotificationNew } from "../../realtime/emit-notification.js";
 import { generateOpaqueToken, hashToken } from "../../utils/token.js";
 import { SYSTEM_ROLES } from "./workspace.roles.js";
 import type {
@@ -782,7 +783,7 @@ export async function transferOwnership(
     throw new AppError("Owner membership missing", 500, "INTERNAL_ERROR");
   }
 
-  await prisma.$transaction(async (tx) => {
+  const transferred = await prisma.$transaction(async (tx) => {
     await tx.workspace.update({
       where: { id: workspaceId },
       data: { ownerId: member.userId },
@@ -805,7 +806,7 @@ export async function transferOwnership(
         metadata: { type: "ownership_transferred", toUserId: member.userId },
       },
     });
-    await tx.notification.create({
+    return tx.notification.create({
       data: {
         workspaceId,
         recipientId: member.userId,
@@ -816,8 +817,20 @@ export async function transferOwnership(
         title: "You are the new owner",
         message: "Workspace ownership was transferred to you.",
       },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
+      },
     });
   });
+
+  emitNotificationNew(transferred);
 
   return { message: "Ownership transferred successfully" };
 }

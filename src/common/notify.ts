@@ -4,6 +4,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "../database/prisma.js";
+import { emitNotificationNew } from "../realtime/emit-notification.js";
 
 export type NotifyInput = {
   workspaceId: string;
@@ -61,7 +62,7 @@ export async function notifyUser(input: NotifyInput) {
     return null;
   }
 
-  return prisma.notification.create({
+  const row = await prisma.notification.create({
     data: {
       workspaceId: input.workspaceId,
       recipientId: input.recipientId,
@@ -73,12 +74,23 @@ export async function notifyUser(input: NotifyInput) {
       message: input.message,
       metadata: input.metadata ?? undefined,
     },
+    include: {
+      sender: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          avatarUrl: true,
+        },
+      },
+    },
   });
+
+  emitNotificationNew(row);
+  return row;
 }
 
-export async function notifyMany(
-  inputs: NotifyInput[],
-): Promise<number> {
+export async function notifyMany(inputs: NotifyInput[]): Promise<number> {
   let created = 0;
   for (const input of inputs) {
     const row = await notifyUser(input);

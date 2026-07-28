@@ -1,4 +1,6 @@
 import type { Server as HttpServer } from "node:http";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { Redis } from "ioredis";
 import {
   Server as SocketIOServer,
   type Namespace,
@@ -14,6 +16,7 @@ import {
   roomJoinSchema,
   roomLeaveSchema,
   typingStateSchema,
+  userRoom,
   type RoomKey,
   type RealtimeSocketErrorPayload,
 } from "./events.js";
@@ -38,6 +41,14 @@ const METRICS_LOG_INTERVAL_MS = 60_000;
 
 let rtNamespace: Namespace | null = null;
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
+
+function isCollaborativeRoom(room: string) {
+  return (
+    room.startsWith("workspace:") ||
+    room.startsWith("board:") ||
+    room.startsWith("task:")
+  );
+}
 
 const roomPresenceIndex = new Map<
   string,
@@ -147,7 +158,9 @@ function attachRealtimeHandlers(socket: Socket) {
 
     try {
       const room = parsed.data.room as RoomKey;
-      const joinedRooms = [...socket.rooms].filter((r) => r !== socket.id);
+      const joinedRooms = [...socket.rooms].filter(
+        (r) => r !== socket.id && isCollaborativeRoom(r),
+      );
       if (!joinedRooms.includes(room) && joinedRooms.length >= MAX_ROOMS_PER_SOCKET) {
         emitSocketError(socket, {
           code: "FORBIDDEN",
@@ -251,7 +264,9 @@ function attachRealtimeHandlers(socket: Socket) {
   });
 
   socket.on("disconnecting", () => {
-    const rooms = [...socket.rooms].filter((room) => room !== socket.id);
+    const rooms = [...socket.rooms].filter(
+      (room) => room !== socket.id && isCollaborativeRoom(room),
+    );
     for (const room of rooms) {
       removePresence(room, socket.id);
       emitRoomPresence(room);
@@ -284,6 +299,24 @@ export function initializeRealtime(httpServer: HttpServer) {
     transports: ["websocket", "polling"],
   });
 
+  if (env.REDIS_URL) {
+    try {
+      const pubClient = new Redis(env.REDIS_URL, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      });
+      const subClient = pubClient.duplicate();
+      io.adapter(createAdapter(pubClient, subClient));
+      rtLog.info("redis_adapter", { enabled: true });
+    } catch (error) {
+      rtLog.error("redis_adapter_failed", {
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  } else {
+    rtLog.info("redis_adapter", { enabled: false, reason: "REDIS_URL unset" });
+  }
+
   const rt = io.of(RT_NAMESPACE);
   rtNamespace = rt;
   rt.use(async (socket, next) => {
@@ -298,9 +331,12 @@ export function initializeRealtime(httpServer: HttpServer) {
 
   rt.on("connection", (socket) => {
     recordConnectionOpen();
+    const personalRoom = userRoom(socket.data.user.id);
+    void socket.join(personalRoom);
     rtLog.info("connect", {
       socketId: socket.id,
       userId: socket.data.user.id,
+      userRoom: personalRoom,
     });
     attachRealtimeHandlers(socket);
   });
