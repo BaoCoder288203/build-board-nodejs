@@ -75,6 +75,19 @@ export async function archive(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function restore(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await boardService.restoreBoard(
+      req.user.id,
+      param(req, "boardId"),
+    );
+    return successResponse(res, result, result.message);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");

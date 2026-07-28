@@ -91,3 +91,8 @@ workspaceRouter.get(
   requireWorkspaceMember,
   workspaceController.getStorage,
 );
+workspaceRouter.get(
+  "/:workspaceId/archived",
+  requireWorkspaceMember,
+  workspaceController.listArchived,
+);

@@ -365,6 +365,46 @@ export async function archiveBoard(userId: string, boardId: string) {
   return { message: "Board archived successfully" };
 }
 
+export async function restoreBoard(userId: string, boardId: string) {
+  const board = await prisma.board.findFirst({
+    where: { id: boardId, deletedAt: null, isArchived: true },
+    include: { project: true },
+  });
+  if (!board) {
+    throw new AppError("Archived board not found", 404, "BOARD_NOT_FOUND");
+  }
+  if (board.project.archivedAt || board.project.deletedAt) {
+    throw new AppError(
+      "Restore the project before restoring this board",
+      400,
+      "PROJECT_ARCHIVED",
+    );
+  }
+
+  const access = await assertCanManageBoard(userId, board.projectId);
+
+  await prisma.board.update({
+    where: { id: boardId },
+    data: { isArchived: false, updatedBy: userId },
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: access.project.workspaceId,
+      projectId: board.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.BOARD,
+      entityId: boardId,
+      action: ActivityAction.RESTORE,
+    },
+  });
+
+  return {
+    message: "Board restored successfully",
+    projectId: board.projectId,
+  };
+}
+
 export async function deleteBoard(userId: string, boardId: string) {
   const board = await prisma.board.findFirst({
     where: { id: boardId, deletedAt: null },

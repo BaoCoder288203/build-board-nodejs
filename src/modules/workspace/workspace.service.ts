@@ -5,6 +5,7 @@ import {
   NotificationEntityType,
   NotificationType,
 } from "@prisma/client";
+import { getWorkspaceMembership } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { notifyUser } from "../../common/notify.js";
 import {
@@ -863,5 +864,117 @@ export async function getStorage(workspaceId: string) {
     imageSize: Number(storage.imageSize),
     videoSize: Number(storage.videoSize),
     documentSize: Number(storage.documentSize),
+  };
+}
+
+/** Archived projects, boards, and columns in a workspace (Phase A). */
+export async function listArchived(userId: string, workspaceId: string) {
+  await getWorkspaceMembership(userId, workspaceId);
+
+  const [projects, boards, columns] = await Promise.all([
+    prisma.project.findMany({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        archivedAt: { not: null },
+      },
+      orderBy: { archivedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        archivedAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.board.findMany({
+      where: {
+        deletedAt: null,
+        isArchived: true,
+        project: { workspaceId, deletedAt: null },
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        projectId: true,
+        updatedAt: true,
+        project: {
+          select: {
+            id: true,
+            name: true,
+            archivedAt: true,
+          },
+        },
+      },
+    }),
+    prisma.column.findMany({
+      where: {
+        deletedAt: null,
+        isArchived: true,
+        board: {
+          deletedAt: null,
+          project: { workspaceId, deletedAt: null },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        boardId: true,
+        updatedAt: true,
+        board: {
+          select: {
+            id: true,
+            name: true,
+            isArchived: true,
+            projectId: true,
+            project: {
+              select: {
+                id: true,
+                name: true,
+                archivedAt: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: { tasks: { where: { deletedAt: null } } },
+        },
+      },
+    }),
+  ]);
+
+  return {
+    projects: projects.map((p) => ({
+      id: p.id,
+      type: "project" as const,
+      name: p.name,
+      slug: p.slug,
+      archivedAt: p.archivedAt,
+      updatedAt: p.updatedAt,
+    })),
+    boards: boards.map((b) => ({
+      id: b.id,
+      type: "board" as const,
+      name: b.name,
+      projectId: b.projectId,
+      projectName: b.project.name,
+      projectArchived: Boolean(b.project.archivedAt),
+      updatedAt: b.updatedAt,
+    })),
+    columns: columns.map((c) => ({
+      id: c.id,
+      type: "column" as const,
+      name: c.name,
+      boardId: c.boardId,
+      boardName: c.board.name,
+      boardArchived: c.board.isArchived,
+      projectId: c.board.projectId,
+      projectName: c.board.project.name,
+      projectArchived: Boolean(c.board.project.archivedAt),
+      tasksCount: c._count.tasks,
+      updatedAt: c.updatedAt,
+    })),
   };
 }

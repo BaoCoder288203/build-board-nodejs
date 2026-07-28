@@ -321,6 +321,42 @@ export async function archiveProject(userId: string, projectId: string) {
   return { message: "Project archived successfully" };
 }
 
+export async function restoreProject(userId: string, projectId: string) {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, deletedAt: null, archivedAt: { not: null } },
+  });
+  if (!project) {
+    throw new AppError("Archived project not found", 404, "PROJECT_NOT_FOUND");
+  }
+
+  const access = await getAccessibleProject(userId, projectId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to restore this project",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { archivedAt: null },
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: project.workspaceId,
+      projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.PROJECT,
+      entityId: projectId,
+      action: ActivityAction.RESTORE,
+    },
+  });
+
+  return { message: "Project restored successfully" };
+}
+
 export async function deleteProject(userId: string, projectId: string) {
   const { project, isProjectOwner, workspaceCtx } = await getAccessibleProject(
     userId,

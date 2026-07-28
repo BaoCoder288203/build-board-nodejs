@@ -3,8 +3,10 @@ import { AppError } from "../../common/app-error.js";
 import { clearAuthCookies, setAuthCookies } from "../../common/cookies.js";
 import { successResponse } from "../../common/response.js";
 import { parseOrThrow } from "../../common/validation.js";
+import { env } from "../../config/env.js";
 import { requireUploadedFile } from "../../middleware/upload.js";
 import * as authService from "./auth.service.js";
+import * as googleOAuth from "./google-oauth.service.js";
 import {
   changePasswordSchema,
   forgotPasswordSchema,
@@ -196,6 +198,71 @@ export async function uploadAvatar(
     const user = await authService.uploadAvatar(req.user.id, file);
     return successResponse(res, user, "Avatar updated");
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function providers(req: Request, res: Response, next: NextFunction) {
+  try {
+    return successResponse(res, googleOAuth.getAuthProviders());
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function googleLogin(req: Request, res: Response, next: NextFunction) {
+  try {
+    const url = googleOAuth.getGoogleAuthRedirectUrl("login");
+    res.redirect(url);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function googleLink(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) {
+      throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    }
+    const url = googleOAuth.getGoogleAuthRedirectUrl("link", req.user.id);
+    res.redirect(url);
+  } catch (error) {
+    next(error);
+  }
+}
+
+function oauthCallbackRedirect(params: Record<string, string>) {
+  const qs = new URLSearchParams(params).toString();
+  const base = env.CORS_ORIGIN.split(",")[0]?.trim() ?? env.CORS_ORIGIN;
+  return `${base}/auth/callback${qs ? `?${qs}` : ""}`;
+}
+
+export async function googleCallback(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const result = await googleOAuth.handleGoogleCallback(
+      typeof req.query.code === "string" ? req.query.code : undefined,
+      typeof req.query.state === "string" ? req.query.state : undefined,
+      typeof req.query.error === "string" ? req.query.error : undefined,
+      authService.requestMeta(req),
+    );
+    setAuthCookies(res, result.accessToken, result.refreshToken);
+    return res.redirect(
+      oauthCallbackRedirect({
+        returnTo: result.returnTo,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof AppError) {
+      return res.redirect(
+        oauthCallbackRedirect({
+          error: error.code ?? "OAUTH_FAILED",
+        }),
+      );
+    }
     next(error);
   }
 }

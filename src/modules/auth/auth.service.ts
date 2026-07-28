@@ -1,5 +1,5 @@
 import * as argon2 from "argon2";
-import { ActivityAction } from "@prisma/client";
+import { ActivityAction, OAuthProvider } from "@prisma/client";
 import type { Request } from "express";
 import { AppError } from "../../common/app-error.js";
 import { uploadBuffer } from "../../common/storage.js";
@@ -138,6 +138,42 @@ export async function register(input: RegisterInput) {
   };
 }
 
+export async function loginWithUser(
+  user: {
+    id: string;
+    email: string;
+    fullName: string;
+    username: string;
+    avatarUrl: string | null;
+    isVerified: boolean;
+    isActive: boolean;
+  },
+  meta?: { ip?: string; userAgent?: string },
+) {
+  if (!user.isActive) {
+    throw new AppError("Account is disabled", 403, "ACCOUNT_DISABLED");
+  }
+
+  const tokens = await issueTokens(user, meta);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  void logAuthActivity({
+    userId: user.id,
+    action: ActivityAction.LOGIN,
+    ip: meta?.ip,
+    userAgent: meta?.userAgent,
+  }).catch(() => {});
+
+  return {
+    ...tokens,
+    user: publicUser(user),
+  };
+}
+
 export async function login(
   input: LoginInput,
   meta?: { ip?: string; userAgent?: string },
@@ -162,24 +198,7 @@ export async function login(
     throw new AppError("Email is not verified", 403, "EMAIL_NOT_VERIFIED");
   }
 
-  const tokens = await issueTokens(user, meta);
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
-
-  void logAuthActivity({
-    userId: user.id,
-    action: ActivityAction.LOGIN,
-    ip: meta?.ip,
-    userAgent: meta?.userAgent,
-  }).catch(() => {});
-
-  return {
-    ...tokens,
-    user: publicUser(user),
-  };
+  return loginWithUser(user, meta);
 }
 
 export async function refresh(
@@ -389,7 +408,16 @@ export async function getMe(userId: string) {
   if (!user || user.deletedAt) {
     throw new AppError("User not found", 404, "USER_NOT_FOUND");
   }
-  return publicUser(user);
+
+  const googleLinked = await prisma.oAuthAccount.findFirst({
+    where: { userId, provider: OAuthProvider.GOOGLE },
+    select: { id: true },
+  });
+
+  return {
+    ...publicUser(user),
+    googleLinked: Boolean(googleLinked),
+  };
 }
 
 export async function updateProfile(userId: string, input: UpdateProfileInput) {

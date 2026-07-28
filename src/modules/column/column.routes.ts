@@ -16,3 +16,4 @@ columnRouter.post("/:columnId/move", columnController.move);
 columnRouter.post("/:columnId/move-tasks", columnController.moveTasks);
 columnRouter.post("/:columnId/sort", columnController.sort);
 columnRouter.post("/:columnId/archive", columnController.archive);
+columnRouter.post("/:columnId/restore", columnController.restore);
