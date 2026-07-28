@@ -11,4 +11,5 @@ projectRouter.get("/", projectController.list);
 projectRouter.get("/:projectId", projectController.getOne);
 projectRouter.patch("/:projectId", projectController.update);
 projectRouter.post("/:projectId/archive", projectController.archive);
+projectRouter.post("/:projectId/restore", projectController.restore);
 projectRouter.delete("/:projectId", projectController.remove);

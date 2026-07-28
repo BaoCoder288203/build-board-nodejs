@@ -11,6 +11,10 @@ import {
   getWorkspaceMembership,
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
+import {
+  commentPlainText,
+  sanitizeCommentContent,
+} from "../../common/comment-content.js";
 import { notifyUser } from "../../common/notify.js";
 import { prisma } from "../../database/prisma.js";
 import type {
@@ -199,6 +203,14 @@ function assertCanMutateComment(
   }
 }
 
+function normalizeCommentContent(raw: string): string {
+  const sanitized = sanitizeCommentContent(raw);
+  if (!commentPlainText(sanitized)) {
+    throw new AppError("Content is required", 400, "VALIDATION_ERROR");
+  }
+  return sanitized;
+}
+
 async function createCommentRecord(options: {
   userId: string;
   task: { id: string; workspaceId: string; projectId: string };
@@ -206,7 +218,8 @@ async function createCommentRecord(options: {
   parentCommentId?: string | null;
   mentionUserIds?: string[];
 }) {
-  const { userId, task, content, parentCommentId, mentionUserIds } = options;
+  const { userId, task, parentCommentId, mentionUserIds } = options;
+  const content = normalizeCommentContent(options.content);
   await assertTaskAccess(userId, task.projectId, "task:update");
   const membership = await getWorkspaceMembership(userId, task.workspaceId);
   const mentionMemberIds = await resolveMentionMemberIds(
@@ -243,7 +256,7 @@ async function createCommentRecord(options: {
         afterData: {
           taskId: task.id,
           parentCommentId: parentCommentId ?? null,
-          contentPreview: content.slice(0, 120),
+          contentPreview: commentPlainText(content).slice(0, 120),
         },
       },
     });
@@ -256,8 +269,8 @@ async function createCommentRecord(options: {
     select: { fullName: true },
   });
   const actorName = actor?.fullName ?? "Someone";
-  const preview =
-    content.length > 80 ? `${content.slice(0, 80)}…` : content;
+  const plain = commentPlainText(content);
+  const preview = plain.length > 80 ? `${plain.slice(0, 80)}…` : plain;
 
   // Mentions
   if (mentionMemberIds.length) {
@@ -405,6 +418,8 @@ export async function updateComment(
   );
   assertCanMutateComment(access, comment, membership.member.id);
 
+  const content = normalizeCommentContent(input.content);
+
   const mentionMemberIds =
     input.mentions !== undefined
       ? await resolveMentionMemberIds(
@@ -429,7 +444,7 @@ export async function updateComment(
     const row = await tx.comment.update({
       where: { id: commentId },
       data: {
-        content: input.content,
+        content,
         isEdited: true,
         editedAt: new Date(),
       },
@@ -444,8 +459,10 @@ export async function updateComment(
         entityType: ActivityEntityType.COMMENT,
         entityId: commentId,
         action: ActivityAction.UPDATE,
-        beforeData: { contentPreview: comment.content.slice(0, 120) },
-        afterData: { contentPreview: input.content.slice(0, 120) },
+        beforeData: {
+          contentPreview: commentPlainText(comment.content).slice(0, 120),
+        },
+        afterData: { contentPreview: commentPlainText(content).slice(0, 120) },
       },
     });
 

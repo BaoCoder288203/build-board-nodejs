@@ -23,3 +23,7 @@ authRouter.post(
   uploadSingle,
   authController.uploadAvatar,
 );
+authRouter.get("/providers", authController.providers);
+authRouter.get("/google", authController.googleLogin);
+authRouter.get("/google/link", requireAuth, authController.googleLink);
+authRouter.get("/google/callback", authController.googleCallback);

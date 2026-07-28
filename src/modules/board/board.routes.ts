@@ -11,4 +11,5 @@ boardRouter.get("/", boardController.list);
 boardRouter.get("/:boardId", boardController.getOne);
 boardRouter.patch("/:boardId", boardController.update);
 boardRouter.post("/:boardId/archive", boardController.archive);
+boardRouter.post("/:boardId/restore", boardController.restore);
 boardRouter.delete("/:boardId", boardController.remove);

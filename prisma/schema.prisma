@@ -127,6 +127,10 @@ enum NotificationType {
   SYSTEM
 }
 
+enum OAuthProvider {
+  GOOGLE
+}
+
 // =============================================================================
 // Authentication
 // =============================================================================
@@ -172,12 +176,28 @@ model User {
   notificationsRecv   Notification[]           @relation("NotificationRecipient")
   notificationsSent   Notification[]           @relation("NotificationSender")
   notificationSettings NotificationSetting?
+  oauthAccounts        OAuthAccount[]
 
   @@index([email])
   @@index([username])
   @@index([createdAt])
   @@index([lastLoginAt])
   @@map("users")
+}
+
+model OAuthAccount {
+  id                String        @id @default(uuid()) @db.Uuid
+  userId            String        @map("user_id") @db.Uuid
+  provider          OAuthProvider
+  providerAccountId String        @map("provider_account_id") @db.VarChar(255)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("oauth_accounts")
 }
 
 model RefreshToken {

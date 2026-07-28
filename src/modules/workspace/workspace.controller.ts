@@ -265,3 +265,20 @@ export async function getStorage(req: Request, res: Response, next: NextFunction
     next(error);
   }
 }
+
+export async function listArchived(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await workspaceService.listArchived(
+      req.user.id,
+      param(req, "workspaceId"),
+    );
+    return successResponse(res, result);
+  } catch (error) {
+    next(error);
+  }
+}

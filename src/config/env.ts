@@ -62,6 +62,11 @@ const envSchema = z.object({
     .transform((v) => v !== "false"),
 
   LOG_LEVEL: z.string().default("debug"),
+
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** Defaults to ${APP_URL}${API_PREFIX}/auth/google/callback */
+  GOOGLE_CALLBACK_URL: z.string().url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

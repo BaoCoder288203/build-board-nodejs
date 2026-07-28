@@ -79,6 +79,19 @@ export async function archive(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function restore(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await projectService.restoreProject(
+      req.user.id,
+      param(req, "projectId"),
+    );
+    return successResponse(res, null, result.message);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");

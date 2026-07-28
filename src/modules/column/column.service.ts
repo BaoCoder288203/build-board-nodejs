@@ -674,3 +674,52 @@ export async function archiveColumn(userId: string, columnId: string) {
 
   return { message: "Column archived successfully" };
 }
+
+export async function restoreColumn(userId: string, columnId: string) {
+  const column = await prisma.column.findFirst({
+    where: { id: columnId, deletedAt: null, isArchived: true },
+  });
+  if (!column) {
+    throw new AppError("Archived column not found", 404, "COLUMN_NOT_FOUND");
+  }
+
+  const { board, access } = await getBoardAccess(userId, column.boardId);
+  if (!access.canManageProject) {
+    throw new AppError(
+      "You do not have permission to restore columns",
+      403,
+      "FORBIDDEN",
+    );
+  }
+
+  if (board.isArchived || board.deletedAt) {
+    throw new AppError(
+      "Restore the board before restoring this column",
+      400,
+      "BOARD_ARCHIVED",
+    );
+  }
+
+  await prisma.column.update({
+    where: { id: columnId },
+    data: { isArchived: false, updatedBy: userId },
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: board.project.workspaceId,
+      projectId: board.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.COLUMN,
+      entityId: columnId,
+      action: ActivityAction.RESTORE,
+      afterData: { name: column.name },
+    },
+  });
+
+  return {
+    message: "Column restored successfully",
+    boardId: column.boardId,
+    projectId: board.projectId,
+  };
+}
