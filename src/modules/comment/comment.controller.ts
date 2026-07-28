@@ -34,14 +34,16 @@ function emitCommentEvent(
 ) {
   const rt = getRealtimeNamespace();
   if (!rt || !boardId) return;
-  rt.to(`board:${boardId}`).emit(event, {
+  const payload = {
     boardId,
     workspaceId,
     taskId: comment.taskId,
     comment,
     actorId,
     occurredAt: new Date().toISOString(),
-  });
+  };
+  rt.to(`board:${boardId}`).emit(event, payload);
+  rt.to(`workspace:${workspaceId}`).emit(event, payload);
 }
 
 async function resolveBoardMeta(taskId: string) {
@@ -117,7 +119,7 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
     );
     const rt = getRealtimeNamespace();
     if (rt) {
-      rt.to(`board:${result.boardId}`).emit(SERVER_EVENT.COMMENT_DELETED, {
+      const payload = {
         boardId: result.boardId,
         workspaceId: result.workspaceId,
         taskId: result.taskId,
@@ -125,7 +127,12 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
         parentCommentId: result.parentCommentId,
         actorId: req.user.id,
         occurredAt: new Date().toISOString(),
-      });
+      };
+      rt.to(`board:${result.boardId}`).emit(SERVER_EVENT.COMMENT_DELETED, payload);
+      rt.to(`workspace:${result.workspaceId}`).emit(
+        SERVER_EVENT.COMMENT_DELETED,
+        payload,
+      );
     }
     return successResponse(res, null, result.message);
   } catch (error) {
