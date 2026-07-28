@@ -15,6 +15,7 @@ import { projectRouter } from "../modules/project/project.routes.js";
 import { searchRouter } from "../modules/search/search.routes.js";
 import { taskRouter } from "../modules/task/task.routes.js";
 import { workspaceRouter } from "../modules/workspace/workspace.routes.js";
+import { getRealtimeMetricsSnapshot } from "../realtime/socket.js";
 
 export const router = Router();
 
@@ -33,6 +34,9 @@ router.get("/health", async (_req, res) => {
     env: env.NODE_ENV,
     database,
     uptime: process.uptime(),
+    realtime: env.ENABLE_SOCKET
+      ? getRealtimeMetricsSnapshot()
+      : { enabled: false },
   });
 });
 

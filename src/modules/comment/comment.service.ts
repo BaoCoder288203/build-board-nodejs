@@ -511,7 +511,14 @@ export async function deleteComment(userId: string, commentId: string) {
     });
   });
 
-  return { message: "Comment deleted" };
+  return {
+    message: "Comment deleted",
+    commentId,
+    taskId: comment.taskId,
+    boardId: comment.task.boardId,
+    workspaceId: comment.task.workspaceId,
+    parentCommentId: comment.parentCommentId,
+  };
 }
 
 export async function replyToComment(
