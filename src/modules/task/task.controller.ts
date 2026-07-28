@@ -3,6 +3,8 @@ import { AppError } from "../../common/app-error.js";
 import { param } from "../../common/params.js";
 import { successResponse } from "../../common/response.js";
 import { parseOrThrow } from "../../common/validation.js";
+import { SERVER_EVENT } from "../../realtime/events.js";
+import { getRealtimeNamespace } from "../../realtime/socket.js";
 import * as taskService from "./task.service.js";
 import {
   assignTaskSchema,
@@ -16,11 +18,54 @@ import {
   updateTaskSchema,
 } from "./task.schema.js";
 
+function emitTaskUpdated(
+  task: {
+    id: string;
+    taskId?: string;
+    boardId: string;
+    workspaceId: string;
+    columnId: string;
+    position: number;
+    [key: string]: unknown;
+  },
+  userId: string,
+) {
+  const rt = getRealtimeNamespace();
+  if (!rt) return;
+  rt.to(`board:${task.boardId}`).emit(SERVER_EVENT.TASK_UPDATED, {
+    task,
+    updatedBy: userId,
+    occurredAt: new Date().toISOString(),
+  });
+}
+
+function emitTaskCreated(
+  task: {
+    id: string;
+    taskId?: string;
+    boardId: string;
+    workspaceId: string;
+    columnId: string;
+    position: number;
+    [key: string]: unknown;
+  },
+  userId: string,
+) {
+  const rt = getRealtimeNamespace();
+  if (!rt) return;
+  rt.to(`board:${task.boardId}`).emit(SERVER_EVENT.TASK_CREATED, {
+    task,
+    updatedBy: userId,
+    occurredAt: new Date().toISOString(),
+  });
+}
+
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const body = parseOrThrow(createTaskSchema, req.body);
     const result = await taskService.createTask(req.user.id, body);
+    emitTaskCreated(result, req.user.id);
     return successResponse(res, result, "Task created", 201);
   } catch (error) {
     next(error);
@@ -57,6 +102,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
       param(req, "taskId"),
       body,
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Task updated");
   } catch (error) {
     next(error);
@@ -70,6 +116,16 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
       req.user.id,
       param(req, "taskId"),
     );
+    const rt = getRealtimeNamespace();
+    if (rt) {
+      rt.to(`board:${result.boardId}`).emit(SERVER_EVENT.TASK_DELETED, {
+        taskId: result.taskId,
+        boardId: result.boardId,
+        workspaceId: result.workspaceId,
+        deletedBy: req.user.id,
+        occurredAt: new Date().toISOString(),
+      });
+    }
     return successResponse(res, null, result.message);
   } catch (error) {
     next(error);
@@ -85,6 +141,21 @@ export async function move(req: Request, res: Response, next: NextFunction) {
       param(req, "taskId"),
       body,
     );
+
+    const rt = getRealtimeNamespace();
+    if (rt) {
+      rt.to(`board:${result.boardId}`).emit(SERVER_EVENT.TASK_MOVED, {
+        taskId: result.id,
+        boardId: result.boardId,
+        workspaceId: result.workspaceId,
+        sourceColumnId: body.sourceColumnId ?? result.columnId,
+        destinationColumnId: result.columnId,
+        newPosition: result.position,
+        movedBy: req.user.id,
+        occurredAt: new Date().toISOString(),
+      });
+    }
+
     return successResponse(res, result, "Task moved");
   } catch (error) {
     next(error);
@@ -100,6 +171,7 @@ export async function assign(req: Request, res: Response, next: NextFunction) {
       param(req, "taskId"),
       body.userId,
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Assignee added");
   } catch (error) {
     next(error);
@@ -115,6 +187,7 @@ export async function unassign(req: Request, res: Response, next: NextFunction) 
       param(req, "taskId"),
       body.userId,
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Assignee removed");
   } catch (error) {
     next(error);
@@ -125,6 +198,7 @@ export async function watch(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const result = await taskService.watchTask(req.user.id, param(req, "taskId"));
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Watching task");
   } catch (error) {
     next(error);
@@ -138,6 +212,7 @@ export async function unwatch(req: Request, res: Response, next: NextFunction) {
       req.user.id,
       param(req, "taskId"),
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Stopped watching task");
   } catch (error) {
     next(error);
@@ -153,6 +228,7 @@ export async function pin(req: Request, res: Response, next: NextFunction) {
       param(req, "taskId"),
       body.pinned,
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, body.pinned ? "Task pinned" : "Task unpinned");
   } catch (error) {
     next(error);
@@ -183,6 +259,7 @@ export async function addLabel(req: Request, res: Response, next: NextFunction) 
       param(req, "taskId"),
       body.labelId,
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Label added");
   } catch (error) {
     next(error);
@@ -201,6 +278,7 @@ export async function removeLabel(
       param(req, "taskId"),
       param(req, "labelId"),
     );
+    emitTaskUpdated(result, req.user.id);
     return successResponse(res, result, "Label removed");
   } catch (error) {
     next(error);

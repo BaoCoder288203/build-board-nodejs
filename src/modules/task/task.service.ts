@@ -487,7 +487,12 @@ export async function deleteTask(userId: string, taskId: string) {
     },
   });
 
-  return { message: "Task deleted successfully" };
+  return {
+    message: "Task deleted successfully",
+    taskId: existing.id,
+    boardId: existing.boardId,
+    workspaceId: existing.workspaceId,
+  };
 }
 
 export async function moveTask(
