@@ -43,6 +43,17 @@ export const listTasksQuerySchema = z.object({
   message: "boardId, columnId, or projectId is required",
 });
 
+export const calendarTasksQuerySchema = z.object({
+  workspaceId: z.string().uuid(),
+  rangeStart: z.coerce.date(),
+  rangeEnd: z.coerce.date(),
+  projectId: z.string().uuid().optional(),
+  boardId: z.string().uuid().optional(),
+  assigneeUserId: z.string().uuid().optional(),
+  priority: taskPrioritySchema.optional(),
+  status: taskStatusSchema.optional(),
+});
+
 export const moveTaskSchema = z.object({
   destinationColumnId: uuid("Destination column id"),
   newPosition: z.number({ error: "newPosition is required" }).int().min(0),
@@ -87,3 +98,4 @@ export type MoveTaskInput = z.infer<typeof moveTaskSchema>;
 export type CreateProjectLabelInput = z.infer<typeof createProjectLabelSchema>;
 export type PinTaskInput = z.infer<typeof pinTaskSchema>;
 export type DuplicateTaskInput = z.infer<typeof duplicateTaskSchema>;
+export type CalendarTasksQuery = z.infer<typeof calendarTasksQuerySchema>;

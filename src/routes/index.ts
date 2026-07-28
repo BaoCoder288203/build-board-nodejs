@@ -35,7 +35,10 @@ router.get("/health", async (_req, res) => {
     database,
     uptime: process.uptime(),
     realtime: env.ENABLE_SOCKET
-      ? getRealtimeMetricsSnapshot()
+      ? {
+          ...getRealtimeMetricsSnapshot(),
+          redisAdapter: Boolean(env.REDIS_URL),
+        }
       : { enabled: false },
   });
 });

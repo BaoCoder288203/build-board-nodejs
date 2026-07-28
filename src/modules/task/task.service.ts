@@ -10,11 +10,13 @@ import {
 import {
   assertPermission,
   getAccessibleProject,
+  getWorkspaceMembership,
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { notifyUser } from "../../common/notify.js";
 import { prisma } from "../../database/prisma.js";
 import type {
+  CalendarTasksQuery,
   CreateProjectLabelInput,
   CreateTaskInput,
   MoveTaskInput,
@@ -373,6 +375,95 @@ export async function listTasks(
     limit: query.limit,
     total,
     totalPages: Math.ceil(total / query.limit) || 1,
+  };
+}
+
+export async function listCalendarTasks(
+  userId: string,
+  query: CalendarTasksQuery,
+) {
+  await getWorkspaceMembership(userId, query.workspaceId);
+
+  const rangeStart = query.rangeStart;
+  const rangeEnd = query.rangeEnd;
+  if (rangeEnd < rangeStart) {
+    throw new AppError(
+      "rangeEnd must be greater than or equal to rangeStart",
+      400,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  if (query.projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: query.projectId, deletedAt: null },
+      select: { workspaceId: true },
+    });
+    if (!project) {
+      throw new AppError("Project not found", 404, "PROJECT_NOT_FOUND");
+    }
+    if (project.workspaceId !== query.workspaceId) {
+      throw new AppError("Project does not belong to workspace", 400, "BAD_REQUEST");
+    }
+    await assertTaskAccess(userId, query.projectId);
+  }
+
+  if (query.boardId) {
+    const board = await prisma.board.findFirst({
+      where: { id: query.boardId, deletedAt: null },
+      select: { projectId: true, project: { select: { workspaceId: true } } },
+    });
+    if (!board) {
+      throw new AppError("Board not found", 404, "BOARD_NOT_FOUND");
+    }
+    if (board.project.workspaceId !== query.workspaceId) {
+      throw new AppError("Board does not belong to workspace", 400, "BAD_REQUEST");
+    }
+    await assertTaskAccess(userId, board.projectId);
+  }
+
+  const assigneeMember = query.assigneeUserId
+    ? await prisma.workspaceMember.findFirst({
+        where: {
+          workspaceId: query.workspaceId,
+          userId: query.assigneeUserId,
+        },
+        select: { id: true },
+      })
+    : null;
+
+  if (query.assigneeUserId && !assigneeMember) {
+    throw new AppError("Assignee is not in workspace", 400, "VALIDATION_ERROR");
+  }
+
+  const rows = await prisma.task.findMany({
+    where: {
+      workspaceId: query.workspaceId,
+      deletedAt: null,
+      dueDate: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.boardId ? { boardId: query.boardId } : {}),
+      ...(query.priority ? { priority: query.priority } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(assigneeMember
+        ? {
+            assignments: {
+              some: { workspaceMemberId: assigneeMember.id },
+            },
+          }
+        : {}),
+    },
+    include: taskCardInclude,
+    orderBy: [{ dueDate: "asc" }, { isPinned: "desc" }, { position: "asc" }],
+  });
+
+  return {
+    items: rows.map((row) => publicTask(row)),
+    rangeStart: rangeStart.toISOString(),
+    rangeEnd: rangeEnd.toISOString(),
   };
 }
 

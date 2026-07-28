@@ -11,6 +11,7 @@ taskRouter.post("/labels", taskController.createLabel);
 taskRouter.delete("/labels/:labelId", taskController.deleteLabelDef);
 taskRouter.post("/", taskController.create);
 taskRouter.get("/", taskController.list);
+taskRouter.get("/calendar", taskController.calendar);
 taskRouter.get("/:taskId", taskController.getOne);
 taskRouter.patch("/:taskId", taskController.update);
 taskRouter.delete("/:taskId", taskController.remove);
