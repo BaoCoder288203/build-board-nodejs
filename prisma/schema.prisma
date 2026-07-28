@@ -127,6 +127,11 @@ enum NotificationType {
   SYSTEM
 }
 
+enum MeetingStatus {
+  ACTIVE
+  ENDED
+}
+
 enum OAuthProvider {
   GOOGLE
 }
@@ -177,6 +182,9 @@ model User {
   notificationsSent   Notification[]           @relation("NotificationSender")
   notificationSettings NotificationSetting?
   oauthAccounts        OAuthAccount[]
+  createdMeetings      Meeting[]               @relation("MeetingCreator")
+  endedMeetings        Meeting[]               @relation("MeetingEnder")
+  meetingParticipants  MeetingParticipant[]
 
   @@index([email])
   @@index([username])
@@ -294,6 +302,7 @@ model Workspace {
   attachments  Attachment[]
   activities   Activity[]
   notifications Notification[]
+  meetings      Meeting[]
 
   @@index([ownerId])
   @@index([slug])
@@ -540,6 +549,7 @@ model Board {
   updater User?    @relation("BoardUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
   columns Column[]
   tasks   Task[]
+  meetings Meeting[]
 
   @@index([projectId])
   @@index([position])
@@ -717,6 +727,50 @@ model TaskPosition {
   @@index([taskId])
   @@index([columnId])
   @@map("task_positions")
+}
+
+model Meeting {
+  id          String       @id @default(uuid()) @db.Uuid
+  boardId     String       @map("board_id") @db.Uuid
+  workspaceId String       @map("workspace_id") @db.Uuid
+  createdBy   String       @map("created_by") @db.Uuid
+  endedBy     String?      @map("ended_by") @db.Uuid
+  title       String?      @db.VarChar(255)
+  status      MeetingStatus @default(ACTIVE)
+  startedAt   DateTime     @default(now()) @map("started_at")
+  endedAt     DateTime?    @map("ended_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  board        Board                @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  creator      User                 @relation("MeetingCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  ender        User?                @relation("MeetingEnder", fields: [endedBy], references: [id], onDelete: SetNull)
+  participants MeetingParticipant[]
+
+  @@index([boardId, status])
+  @@index([workspaceId, status])
+  @@index([startedAt])
+  @@map("meetings")
+}
+
+model MeetingParticipant {
+  id        String   @id @default(uuid()) @db.Uuid
+  meetingId String   @map("meeting_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  isHost    Boolean  @default(false) @map("is_host")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  leftAt    DateTime? @map("left_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([meetingId, userId])
+  @@index([meetingId, leftAt])
+  @@index([userId])
+  @@map("meeting_participants")
 }
 
 // =============================================================================
