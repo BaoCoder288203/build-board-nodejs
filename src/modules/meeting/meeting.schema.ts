@@ -1,0 +1,13 @@
+import { z } from "zod";
+
+export const createMeetingSchema = z.object({
+  title: z.string().trim().min(1).max(255).optional(),
+});
+
+export const listMeetingsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export type CreateMeetingInput = z.infer<typeof createMeetingSchema>;
+export type ListMeetingsQuery = z.infer<typeof listMeetingsQuerySchema>;

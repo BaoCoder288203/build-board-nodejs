@@ -6,6 +6,10 @@ export const CLIENT_EVENT = {
   ROOM_JOIN: "room:join",
   ROOM_LEAVE: "room:leave",
   TYPING_STATE: "typing:state",
+  MEETING_SIGNAL_OFFER: "meeting:signal:offer",
+  MEETING_SIGNAL_ANSWER: "meeting:signal:answer",
+  MEETING_SIGNAL_ICE: "meeting:signal:ice",
+  MEETING_MEDIA_STATE: "meeting:media:state",
 } as const;
 
 export const SERVER_EVENT = {
@@ -25,13 +29,22 @@ export const SERVER_EVENT = {
   COMMENT_DELETED: "comment:deleted",
   COMMENT_REACTION: "comment:reaction",
   NOTIFICATION_NEW: "notification:new",
+  MEETING_CREATED: "meeting:created",
+  MEETING_JOINED: "meeting:joined",
+  MEETING_LEFT: "meeting:left",
+  MEETING_ENDED: "meeting:ended",
+  MEETING_PARTICIPANTS: "meeting:participants",
+  MEETING_SIGNAL_OFFER: "meeting:signal:offer",
+  MEETING_SIGNAL_ANSWER: "meeting:signal:answer",
+  MEETING_SIGNAL_ICE: "meeting:signal:ice",
+  MEETING_MEDIA_STATE: "meeting:media:state",
 } as const;
 
-export const roomKindSchema = z.enum(["workspace", "board", "task"]);
+export const roomKindSchema = z.enum(["workspace", "board", "task", "meeting"]);
 
 export const roomKeySchema = z
   .string()
-  .regex(/^(workspace|board|task):[0-9a-fA-F-]{36}$/);
+  .regex(/^(workspace|board|task|meeting):[0-9a-fA-F-]{36}$/);
 
 export const roomJoinSchema = z.object({
   room: roomKeySchema,
@@ -45,6 +58,32 @@ export const typingStateSchema = z.object({
   room: roomKeySchema,
   taskId: z.string().uuid(),
   isTyping: z.boolean(),
+});
+
+const signalEnvelopeSchema = z.object({
+  meetingId: z.string().uuid(),
+  toUserId: z.string().uuid(),
+});
+
+export const meetingSignalOfferSchema = signalEnvelopeSchema.extend({
+  sdp: z.string().min(1),
+});
+
+export const meetingSignalAnswerSchema = signalEnvelopeSchema.extend({
+  sdp: z.string().min(1),
+});
+
+export const meetingSignalIceSchema = signalEnvelopeSchema.extend({
+  candidate: z.string().min(1),
+  sdpMid: z.string().nullable().optional(),
+  sdpMLineIndex: z.number().int().nullable().optional(),
+});
+
+export const meetingMediaStateSchema = z.object({
+  meetingId: z.string().uuid(),
+  audioEnabled: z.boolean().optional(),
+  videoEnabled: z.boolean().optional(),
+  screenSharing: z.boolean().optional(),
 });
 
 export type RoomKey = z.infer<typeof roomKeySchema>;
@@ -211,6 +250,103 @@ export type NotificationNewPayload = {
   occurredAt: string;
 };
 
+export type MeetingRealtimeUser = {
+  userId: string;
+  fullName: string;
+  avatar: string | null;
+  isHost: boolean;
+  joinedAt: string;
+  leftAt: string | null;
+};
+
+export type MeetingRealtime = {
+  id: string;
+  boardId: string;
+  workspaceId: string;
+  createdBy: string;
+  status: "ACTIVE" | "ENDED";
+  title: string | null;
+  startedAt: string;
+  endedAt: string | null;
+};
+
+export type MeetingCreatedPayload = {
+  meeting: MeetingRealtime;
+  participants: MeetingRealtimeUser[];
+  actorId: string;
+  occurredAt: string;
+};
+
+export type MeetingJoinedPayload = {
+  meetingId: string;
+  boardId: string;
+  workspaceId: string;
+  participant: MeetingRealtimeUser;
+  actorId: string;
+  occurredAt: string;
+};
+
+export type MeetingLeftPayload = {
+  meetingId: string;
+  boardId: string;
+  workspaceId: string;
+  participant: MeetingRealtimeUser;
+  actorId: string;
+  occurredAt: string;
+};
+
+export type MeetingEndedPayload = {
+  meetingId: string;
+  boardId: string;
+  workspaceId: string;
+  endedBy: string;
+  occurredAt: string;
+};
+
+export type MeetingParticipantsPayload = {
+  meetingId: string;
+  boardId: string;
+  workspaceId: string;
+  participants: MeetingRealtimeUser[];
+  occurredAt: string;
+};
+
+export type MeetingSignalOfferPayload = {
+  meetingId: string;
+  fromUserId: string;
+  toUserId: string;
+  sdp: string;
+  occurredAt: string;
+};
+
+export type MeetingSignalAnswerPayload = MeetingSignalOfferPayload;
+
+export type MeetingSignalIcePayload = {
+  meetingId: string;
+  fromUserId: string;
+  toUserId: string;
+  candidate: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  occurredAt: string;
+};
+
+export type MeetingMediaStatePayload = {
+  meetingId: string;
+  user: {
+    id: string;
+    fullName: string;
+  };
+  audioEnabled?: boolean;
+  videoEnabled?: boolean;
+  screenSharing?: boolean;
+  occurredAt: string;
+};
+
 export function userRoom(userId: string) {
   return `user:${userId}`;
+}
+
+export function meetingRoom(meetingId: string) {
+  return `meeting:${meetingId}`;
 }

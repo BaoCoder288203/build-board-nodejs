@@ -44,6 +44,17 @@ async function assertTaskAccess(userId: string, taskId: string) {
   await assertWorkspaceAccess(userId, task.workspaceId);
 }
 
+async function assertMeetingAccess(userId: string, meetingId: string) {
+  const meeting = await prisma.meeting.findFirst({
+    where: { id: meetingId, status: "ACTIVE" },
+    select: { workspaceId: true },
+  });
+  if (!meeting) {
+    throw new AppError("Room target not found", 404, "ROOM_NOT_FOUND");
+  }
+  await assertWorkspaceAccess(userId, meeting.workspaceId);
+}
+
 export async function assertRoomAccess(userId: string, room: RoomKey) {
   const { kind, entityId } = parseRoom(room);
   if (kind === "workspace") {
@@ -54,5 +65,9 @@ export async function assertRoomAccess(userId: string, room: RoomKey) {
     await assertBoardAccess(userId, entityId);
     return;
   }
-  await assertTaskAccess(userId, entityId);
+  if (kind === "task") {
+    await assertTaskAccess(userId, entityId);
+    return;
+  }
+  await assertMeetingAccess(userId, entityId);
 }
