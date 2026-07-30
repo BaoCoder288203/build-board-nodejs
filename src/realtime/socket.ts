@@ -15,6 +15,7 @@ import {
   RT_NAMESPACE,
   SERVER_EVENT,
   meetingMediaStateSchema,
+  meetingModerationSchema,
   meetingSignalAnswerSchema,
   meetingSignalIceSchema,
   meetingSignalOfferSchema,
@@ -61,6 +62,58 @@ const roomPresenceIndex = new Map<
   string,
   Map<string, { id: string; fullName: string; avatar: string | null }>
 >();
+
+type MeetingMediaSnapshot = {
+  userId: string;
+  fullName: string;
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+  screenSharing: boolean;
+  screenStreamId: string | null;
+};
+
+/** In-memory last-known media flags per meeting participant (for late joiners). */
+const meetingMediaIndex = new Map<string, Map<string, MeetingMediaSnapshot>>();
+
+function upsertMeetingMedia(
+  meetingId: string,
+  snapshot: MeetingMediaSnapshot,
+) {
+  const current = meetingMediaIndex.get(meetingId) ?? new Map();
+  current.set(snapshot.userId, snapshot);
+  meetingMediaIndex.set(meetingId, current);
+}
+
+function removeMeetingMediaUser(meetingId: string, userId: string) {
+  const current = meetingMediaIndex.get(meetingId);
+  if (!current) return;
+  current.delete(userId);
+  if (current.size === 0) {
+    meetingMediaIndex.delete(meetingId);
+  }
+}
+
+function clearMeetingMedia(meetingId: string) {
+  meetingMediaIndex.delete(meetingId);
+}
+
+function emitMeetingMediaSync(socket: Socket, meetingId: string) {
+  const current = meetingMediaIndex.get(meetingId);
+  const states = current
+    ? [...current.values()].map((snap) => ({
+        user: { id: snap.userId, fullName: snap.fullName },
+        audioEnabled: snap.audioEnabled,
+        videoEnabled: snap.videoEnabled,
+        screenSharing: snap.screenSharing,
+        screenStreamId: snap.screenStreamId,
+      }))
+    : [];
+  socket.emit(SERVER_EVENT.MEETING_MEDIA_SYNC, {
+    meetingId,
+    states,
+    occurredAt: new Date().toISOString(),
+  });
+}
 
 function upsertPresence(room: string, socket: Socket) {
   const current = roomPresenceIndex.get(room) ?? new Map();
@@ -215,6 +268,9 @@ function attachRealtimeHandlers(socket: Socket) {
         joinedAt: new Date().toISOString(),
       });
       emitRoomPresence(room);
+      if (room.startsWith("meeting:")) {
+        emitMeetingMediaSync(socket, room.slice("meeting:".length));
+      }
     } catch (error) {
       handleError(socket, error, CLIENT_EVENT.ROOM_JOIN);
     }
@@ -244,6 +300,9 @@ function attachRealtimeHandlers(socket: Socket) {
     await socket.leave(room);
     removePresence(room, socket.id);
     recordRoomLeave();
+    if (room.startsWith("meeting:")) {
+      removeMeetingMediaUser(room.slice("meeting:".length), socket.data.user.id);
+    }
     rtLog.debug("room_leave", {
       socketId: socket.id,
       userId: socket.data.user.id,
@@ -414,9 +473,15 @@ function attachRealtimeHandlers(socket: Socket) {
       return;
     }
     try {
-      const { meetingId, audioEnabled, videoEnabled, screenSharing } = parsed.data;
+      const {
+        meetingId,
+        audioEnabled,
+        videoEnabled,
+        screenSharing,
+        screenStreamId,
+      } = parsed.data;
       await assertMeetingRelayAccess(meetingId);
-      socket.to(`meeting:${meetingId}`).emit(SERVER_EVENT.MEETING_MEDIA_STATE, {
+      const payloadOut = {
         meetingId,
         user: {
           id: socket.data.user.id,
@@ -425,10 +490,76 @@ function attachRealtimeHandlers(socket: Socket) {
         audioEnabled,
         videoEnabled,
         screenSharing,
+        screenStreamId: screenStreamId ?? null,
+        occurredAt: new Date().toISOString(),
+      };
+      upsertMeetingMedia(meetingId, {
+        userId: payloadOut.user.id,
+        fullName: payloadOut.user.fullName,
+        audioEnabled,
+        videoEnabled,
+        screenSharing,
+        screenStreamId: screenStreamId ?? null,
+      });
+      socket.to(`meeting:${meetingId}`).emit(SERVER_EVENT.MEETING_MEDIA_STATE, payloadOut);
+    } catch (error) {
+      handleError(socket, error, CLIENT_EVENT.MEETING_MEDIA_STATE);
+    }
+  });
+
+  socket.on(CLIENT_EVENT.MEETING_MODERATION, async (payload: unknown) => {
+    if (!canProcessSignaling()) {
+      emitSocketError(socket, {
+        code: "RATE_LIMITED",
+        message: "Meeting moderation rate limit exceeded",
+        event: CLIENT_EVENT.MEETING_MODERATION,
+      });
+      return;
+    }
+    const parsed = meetingModerationSchema.safeParse(payload);
+    if (!parsed.success) {
+      emitSocketError(socket, {
+        code: "BAD_PAYLOAD",
+        message: "Invalid meeting moderation payload",
+        event: CLIENT_EVENT.MEETING_MODERATION,
+      });
+      return;
+    }
+    try {
+      const { meetingId, targetUserId, audioEnabled, videoEnabled } = parsed.data;
+      if (audioEnabled === undefined && videoEnabled === undefined) {
+        emitSocketError(socket, {
+          code: "BAD_PAYLOAD",
+          message: "Moderation requires audioEnabled and/or videoEnabled",
+          event: CLIENT_EVENT.MEETING_MODERATION,
+        });
+        return;
+      }
+      await assertMeetingRelayAccess(meetingId, targetUserId);
+      const host = await prisma.meetingParticipant.findFirst({
+        where: {
+          meetingId,
+          userId: socket.data.user.id,
+          leftAt: null,
+          isHost: true,
+        },
+      });
+      if (!host) {
+        throw new AppError("Only the meeting host can moderate", 403, "FORBIDDEN");
+      }
+      if (targetUserId === socket.data.user.id) {
+        throw new AppError("Cannot moderate yourself", 409, "BAD_PAYLOAD");
+      }
+      socket.to(userRoom(targetUserId)).emit(SERVER_EVENT.MEETING_MODERATION, {
+        meetingId,
+        fromUserId: socket.data.user.id,
+        targetUserId,
+        audioEnabled,
+        videoEnabled,
         occurredAt: new Date().toISOString(),
       });
     } catch (error) {
-      handleError(socket, error, CLIENT_EVENT.MEETING_MEDIA_STATE);
+      handleError(socket, error, CLIENT_EVENT.MEETING_MODERATION);
     }
   });
 
@@ -438,6 +569,9 @@ function attachRealtimeHandlers(socket: Socket) {
     );
     for (const room of rooms) {
       removePresence(room, socket.id);
+      if (room.startsWith("meeting:")) {
+        removeMeetingMediaUser(room.slice("meeting:".length), socket.data.user.id);
+      }
       emitRoomPresence(room);
     }
   });
@@ -522,6 +656,10 @@ export function initializeRealtime(httpServer: HttpServer) {
 
 export function getRealtimeNamespace() {
   return rtNamespace;
+}
+
+export function clearMeetingMediaState(meetingId: string) {
+  clearMeetingMedia(meetingId);
 }
 
 export function getRealtimeMetricsSnapshot() {

@@ -9,3 +9,5 @@ meetingRouter.use(requireAuth);
 meetingRouter.post("/:meetingId/join", meetingController.join);
 meetingRouter.post("/:meetingId/leave", meetingController.leave);
 meetingRouter.post("/:meetingId/end", meetingController.end);
+meetingRouter.post("/:meetingId/transfer-host", meetingController.transferHost);
+meetingRouter.post("/:meetingId/kick", meetingController.kick);

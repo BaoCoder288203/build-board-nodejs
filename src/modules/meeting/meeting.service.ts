@@ -357,10 +357,17 @@ export async function leaveMeeting(userId: string, meetingId: string) {
   if (!existing) {
     throw new AppError("You are not a participant", 404, "PARTICIPANT_NOT_FOUND");
   }
+
+  const wasHost = existing.isHost && existing.leftAt == null;
+  const leftAt = existing.leftAt ?? new Date();
+
   if (!existing.leftAt) {
     await prisma.meetingParticipant.update({
       where: { id: existing.id },
-      data: { leftAt: new Date() },
+      data: {
+        leftAt,
+        isHost: false,
+      },
     });
   }
 
@@ -379,15 +386,29 @@ export async function leaveMeeting(userId: string, meetingId: string) {
     },
   });
 
-  const activeCount = await prisma.meetingParticipant.count({
+  const remaining = await prisma.meetingParticipant.findMany({
     where: {
       meetingId: meeting.id,
       leftAt: null,
     },
+    include: participantInclude,
+    orderBy: { joinedAt: "asc" },
   });
 
+  let newHost: ReturnType<typeof publicParticipant> | null = null;
+  if (wasHost && remaining.length > 0) {
+    const nextHostRow = remaining[0]!;
+    const promoted = await prisma.meetingParticipant.update({
+      where: { id: nextHostRow.id },
+      data: { isHost: true },
+      include: participantInclude,
+    });
+    newHost = publicParticipant(promoted);
+    remaining[0] = promoted;
+  }
+
   let endedMeeting: ReturnType<typeof publicMeeting> | null = null;
-  if (activeCount === 0 && meeting.status === MeetingStatus.ACTIVE) {
+  if (remaining.length === 0 && meeting.status === MeetingStatus.ACTIVE) {
     const now = new Date();
     const ended = await prisma.meeting.update({
       where: { id: meeting.id },
@@ -404,9 +425,12 @@ export async function leaveMeeting(userId: string, meetingId: string) {
     meeting: publicMeeting(meeting),
     participant: publicParticipant({
       ...existing,
-      leftAt: existing.leftAt ?? new Date(),
+      isHost: false,
+      leftAt,
     }),
     endedMeeting,
+    newHost,
+    participants: remaining.map(publicParticipant),
   };
 }
 
@@ -437,9 +461,11 @@ export async function endMeeting(userId: string, meetingId: string) {
       },
     },
   });
-  const isHost = Boolean(actorParticipant?.isHost);
-  if (!isHost && !access.canManageProject) {
-    throw new AppError("Only host can end this meeting", 403, "FORBIDDEN");
+  const isActiveHost = Boolean(
+    actorParticipant?.isHost && actorParticipant.leftAt == null,
+  );
+  if (!isActiveHost && !access.canManageProject) {
+    throw new AppError("Only the meeting host can end this meeting", 403, "FORBIDDEN");
   }
 
   const now = new Date();
@@ -484,4 +510,135 @@ export async function endMeeting(userId: string, meetingId: string) {
   });
 
   return publicMeeting(ended);
+}
+
+async function requireActiveMeeting(meetingId: string) {
+  const meeting = await prisma.meeting.findFirst({
+    where: { id: meetingId },
+    include: {
+      board: {
+        include: {
+          project: { select: { id: true, workspaceId: true } },
+        },
+      },
+    },
+  });
+  if (!meeting || meeting.board.deletedAt || !meeting.board.project) {
+    throw new AppError("Meeting not found", 404, "MEETING_NOT_FOUND");
+  }
+  if (meeting.status !== MeetingStatus.ACTIVE) {
+    throw new AppError("Meeting is no longer active", 409, "MEETING_NOT_ACTIVE");
+  }
+  return meeting;
+}
+
+async function requireActiveHost(meetingId: string, userId: string) {
+  const host = await prisma.meetingParticipant.findFirst({
+    where: {
+      meetingId,
+      userId,
+      leftAt: null,
+      isHost: true,
+    },
+  });
+  if (!host) {
+    throw new AppError("Only the meeting host can perform this action", 403, "FORBIDDEN");
+  }
+  return host;
+}
+
+export async function transferHost(
+  userId: string,
+  meetingId: string,
+  toUserId: string,
+) {
+  const meeting = await requireActiveMeeting(meetingId);
+  await getAccessibleProject(userId, meeting.board.project.id);
+  await requireActiveHost(meeting.id, userId);
+
+  if (toUserId === userId) {
+    throw new AppError("Already the host", 409, "BAD_PAYLOAD");
+  }
+
+  const target = await prisma.meetingParticipant.findFirst({
+    where: {
+      meetingId: meeting.id,
+      userId: toUserId,
+      leftAt: null,
+    },
+    include: participantInclude,
+  });
+  if (!target) {
+    throw new AppError("Target is not in the meeting", 404, "PARTICIPANT_NOT_FOUND");
+  }
+
+  await prisma.$transaction([
+    prisma.meetingParticipant.updateMany({
+      where: { meetingId: meeting.id, leftAt: null, isHost: true },
+      data: { isHost: false },
+    }),
+    prisma.meetingParticipant.update({
+      where: { id: target.id },
+      data: { isHost: true },
+    }),
+  ]);
+
+  const participants = await prisma.meetingParticipant.findMany({
+    where: { meetingId: meeting.id, leftAt: null },
+    include: participantInclude,
+    orderBy: { joinedAt: "asc" },
+  });
+
+  const newHost = participants.find((p) => p.userId === toUserId)!;
+
+  return {
+    meeting: publicMeeting({ ...meeting, participants }),
+    newHost: publicParticipant(newHost),
+    participants: participants.map(publicParticipant),
+  };
+}
+
+export async function kickParticipant(
+  userId: string,
+  meetingId: string,
+  targetUserId: string,
+) {
+  const meeting = await requireActiveMeeting(meetingId);
+  await getAccessibleProject(userId, meeting.board.project.id);
+  await requireActiveHost(meeting.id, userId);
+
+  if (targetUserId === userId) {
+    throw new AppError("Use leave to exit the meeting", 409, "BAD_PAYLOAD");
+  }
+
+  const target = await prisma.meetingParticipant.findFirst({
+    where: {
+      meetingId: meeting.id,
+      userId: targetUserId,
+      leftAt: null,
+    },
+    include: participantInclude,
+  });
+  if (!target) {
+    throw new AppError("Target is not in the meeting", 404, "PARTICIPANT_NOT_FOUND");
+  }
+
+  const leftAt = new Date();
+  const kicked = await prisma.meetingParticipant.update({
+    where: { id: target.id },
+    data: { leftAt, isHost: false },
+    include: participantInclude,
+  });
+
+  const participants = await prisma.meetingParticipant.findMany({
+    where: { meetingId: meeting.id, leftAt: null },
+    include: participantInclude,
+    orderBy: { joinedAt: "asc" },
+  });
+
+  return {
+    meeting: publicMeeting(meeting),
+    participant: publicParticipant({ ...kicked, leftAt }),
+    participants: participants.map(publicParticipant),
+  };
 }
