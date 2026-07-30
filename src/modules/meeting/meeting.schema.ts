@@ -9,5 +9,15 @@ export const listMeetingsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+export const transferHostSchema = z.object({
+  toUserId: z.string().uuid(),
+});
+
+export const kickParticipantSchema = z.object({
+  userId: z.string().uuid(),
+});
+
 export type CreateMeetingInput = z.infer<typeof createMeetingSchema>;
 export type ListMeetingsQuery = z.infer<typeof listMeetingsQuerySchema>;
+export type TransferHostInput = z.infer<typeof transferHostSchema>;
+export type KickParticipantInput = z.infer<typeof kickParticipantSchema>;

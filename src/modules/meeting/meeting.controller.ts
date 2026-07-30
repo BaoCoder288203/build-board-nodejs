@@ -4,9 +4,14 @@ import { param } from "../../common/params.js";
 import { successResponse } from "../../common/response.js";
 import { parseOrThrow } from "../../common/validation.js";
 import { SERVER_EVENT } from "../../realtime/events.js";
-import { getRealtimeNamespace } from "../../realtime/socket.js";
+import { getRealtimeNamespace, clearMeetingMediaState } from "../../realtime/socket.js";
 import * as meetingService from "./meeting.service.js";
-import { createMeetingSchema, listMeetingsQuerySchema } from "./meeting.schema.js";
+import {
+  createMeetingSchema,
+  kickParticipantSchema,
+  listMeetingsQuerySchema,
+  transferHostSchema,
+} from "./meeting.schema.js";
 
 function emitMeetingCreated(input: {
   meeting: {
@@ -84,6 +89,7 @@ function emitMeetingEnded(input: {
   workspaceId: string;
   endedBy: string;
 }) {
+  clearMeetingMediaState(input.meetingId);
   const rt = getRealtimeNamespace();
   if (!rt) return;
   const payload = {
@@ -197,18 +203,21 @@ export async function leave(req: Request, res: Response, next: NextFunction) {
         participants: [],
       });
     } else {
-      const refreshed = await meetingService.getActiveMeeting(
-        req.user.id,
-        result.meeting.boardId,
-      );
       emitMeetingParticipants({
         meetingId: result.meeting.id,
         boardId: result.meeting.boardId,
         workspaceId: result.meeting.workspaceId,
-        participants: refreshed?.participants ?? [],
+        participants: result.participants,
       });
     }
-    return successResponse(res, null, "Left meeting");
+    return successResponse(
+      res,
+      {
+        newHost: result.newHost,
+        ended: Boolean(result.endedMeeting),
+      },
+      "Left meeting",
+    );
   } catch (error) {
     next(error);
   }
@@ -231,6 +240,55 @@ export async function end(req: Request, res: Response, next: NextFunction) {
       participants: [],
     });
     return successResponse(res, result, "Meeting ended");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function transferHost(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(transferHostSchema, req.body);
+    const result = await meetingService.transferHost(
+      req.user.id,
+      param(req, "meetingId"),
+      body.toUserId,
+    );
+    emitMeetingParticipants({
+      meetingId: result.meeting.id,
+      boardId: result.meeting.boardId,
+      workspaceId: result.meeting.workspaceId,
+      participants: result.participants,
+    });
+    return successResponse(res, result, "Host transferred");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function kick(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(kickParticipantSchema, req.body);
+    const result = await meetingService.kickParticipant(
+      req.user.id,
+      param(req, "meetingId"),
+      body.userId,
+    );
+    emitMeetingParticipantEvent(SERVER_EVENT.MEETING_LEFT, {
+      meetingId: result.meeting.id,
+      boardId: result.meeting.boardId,
+      workspaceId: result.meeting.workspaceId,
+      participant: result.participant,
+      actorId: req.user.id,
+    });
+    emitMeetingParticipants({
+      meetingId: result.meeting.id,
+      boardId: result.meeting.boardId,
+      workspaceId: result.meeting.workspaceId,
+      participants: result.participants,
+    });
+    return successResponse(res, result, "Participant removed");
   } catch (error) {
     next(error);
   }

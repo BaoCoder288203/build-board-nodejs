@@ -10,6 +10,7 @@ export const CLIENT_EVENT = {
   MEETING_SIGNAL_ANSWER: "meeting:signal:answer",
   MEETING_SIGNAL_ICE: "meeting:signal:ice",
   MEETING_MEDIA_STATE: "meeting:media:state",
+  MEETING_MODERATION: "meeting:moderation",
 } as const;
 
 export const SERVER_EVENT = {
@@ -38,6 +39,8 @@ export const SERVER_EVENT = {
   MEETING_SIGNAL_ANSWER: "meeting:signal:answer",
   MEETING_SIGNAL_ICE: "meeting:signal:ice",
   MEETING_MEDIA_STATE: "meeting:media:state",
+  MEETING_MEDIA_SYNC: "meeting:media:sync",
+  MEETING_MODERATION: "meeting:moderation",
 } as const;
 
 export const roomKindSchema = z.enum(["workspace", "board", "task", "meeting"]);
@@ -81,9 +84,17 @@ export const meetingSignalIceSchema = signalEnvelopeSchema.extend({
 
 export const meetingMediaStateSchema = z.object({
   meetingId: z.string().uuid(),
+  audioEnabled: z.boolean(),
+  videoEnabled: z.boolean(),
+  screenSharing: z.boolean(),
+  screenStreamId: z.string().min(1).nullable().optional(),
+});
+
+export const meetingModerationSchema = z.object({
+  meetingId: z.string().uuid(),
+  targetUserId: z.string().uuid(),
   audioEnabled: z.boolean().optional(),
   videoEnabled: z.boolean().optional(),
-  screenSharing: z.boolean().optional(),
 });
 
 export type RoomKey = z.infer<typeof roomKeySchema>;
