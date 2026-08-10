@@ -1,6 +1,7 @@
 import {
   ActivityAction,
   ActivityEntityType,
+  MeetingTileBgMode,
   NotificationEntityType,
   NotificationType,
   MeetingStatus,
@@ -8,8 +9,12 @@ import {
 import { getAccessibleProject } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { notifyMany } from "../../common/notify.js";
+import { uploadBuffer } from "../../common/storage.js";
 import { prisma } from "../../database/prisma.js";
-import type { CreateMeetingInput } from "./meeting.schema.js";
+import type {
+  CreateMeetingInput,
+  UpdateMyAppearanceInput,
+} from "./meeting.schema.js";
 
 const participantInclude = {
   user: {
@@ -20,6 +25,32 @@ const participantInclude = {
     },
   },
 } as const;
+
+function publicParticipant(participant: {
+  userId: string;
+  isHost: boolean;
+  displayName: string | null;
+  tileBgMode: MeetingTileBgMode;
+  tileBgUrl: string | null;
+  joinedAt: Date;
+  leftAt: Date | null;
+  user: { id: string; fullName: string; avatarUrl: string | null };
+}) {
+  const customName = participant.displayName?.trim() || null;
+  const displayName = customName || participant.user.fullName;
+  return {
+    userId: participant.userId,
+    fullName: displayName,
+    accountName: participant.user.fullName,
+    displayName: customName,
+    avatar: participant.user.avatarUrl,
+    isHost: participant.isHost,
+    tileBgMode: participant.tileBgMode,
+    tileBgUrl: participant.tileBgUrl,
+    joinedAt: participant.joinedAt,
+    leftAt: participant.leftAt,
+  };
+}
 
 async function getBoardAccess(userId: string, boardId: string) {
   const board = await prisma.board.findFirst({
@@ -40,25 +71,6 @@ async function getBoardAccess(userId: string, boardId: string) {
   return { board, projectAccess };
 }
 
-function publicParticipant(
-  participant: {
-    userId: string;
-    isHost: boolean;
-    joinedAt: Date;
-    leftAt: Date | null;
-    user: { id: string; fullName: string; avatarUrl: string | null };
-  },
-) {
-  return {
-    userId: participant.userId,
-    fullName: participant.user.fullName,
-    avatar: participant.user.avatarUrl,
-    isHost: participant.isHost,
-    joinedAt: participant.joinedAt,
-    leftAt: participant.leftAt,
-  };
-}
-
 function publicMeeting(
   meeting: {
     id: string;
@@ -69,13 +81,7 @@ function publicMeeting(
     status: MeetingStatus;
     startedAt: Date;
     endedAt: Date | null;
-    participants?: Array<{
-      userId: string;
-      isHost: boolean;
-      joinedAt: Date;
-      leftAt: Date | null;
-      user: { id: string; fullName: string; avatarUrl: string | null };
-    }>;
+    participants?: Array<Parameters<typeof publicParticipant>[0]>;
   },
 ) {
   return {
@@ -639,6 +645,119 @@ export async function kickParticipant(
   return {
     meeting: publicMeeting(meeting),
     participant: publicParticipant({ ...kicked, leftAt }),
+    participants: participants.map(publicParticipant),
+  };
+}
+
+export async function updateMyAppearance(
+  userId: string,
+  meetingId: string,
+  input: UpdateMyAppearanceInput,
+) {
+  const meeting = await requireActiveMeeting(meetingId);
+  await getAccessibleProject(userId, meeting.board.project.id);
+
+  const existing = await prisma.meetingParticipant.findFirst({
+    where: { meetingId: meeting.id, userId, leftAt: null },
+  });
+  if (!existing) {
+    throw new AppError("You are not in this meeting", 404, "PARTICIPANT_NOT_FOUND");
+  }
+
+  let nextMode = input.tileBgMode ?? existing.tileBgMode;
+  let nextUrl =
+    input.tileBgUrl !== undefined ? input.tileBgUrl : existing.tileBgUrl;
+
+  if (nextMode === MeetingTileBgMode.NONE || nextMode === MeetingTileBgMode.BLUR) {
+    nextUrl = null;
+  }
+  if (nextMode === MeetingTileBgMode.IMAGE && !nextUrl) {
+    throw new AppError(
+      "Upload a background image before selecting IMAGE mode",
+      400,
+      "BAD_PAYLOAD",
+    );
+  }
+
+  const displayName =
+    input.displayName === undefined
+      ? undefined
+      : input.displayName === "" || input.displayName === null
+        ? null
+        : input.displayName.trim();
+
+  const updated = await prisma.meetingParticipant.update({
+    where: { id: existing.id },
+    data: {
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(input.tileBgMode !== undefined || input.tileBgUrl !== undefined
+        ? { tileBgMode: nextMode, tileBgUrl: nextUrl }
+        : {}),
+    },
+    include: participantInclude,
+  });
+
+  const participants = await prisma.meetingParticipant.findMany({
+    where: { meetingId: meeting.id, leftAt: null },
+    include: participantInclude,
+    orderBy: { joinedAt: "asc" },
+  });
+
+  return {
+    meeting: publicMeeting({ ...meeting, participants }),
+    participant: publicParticipant(updated),
+    participants: participants.map(publicParticipant),
+  };
+}
+
+export async function uploadMyTileBackground(
+  userId: string,
+  meetingId: string,
+  file: Express.Multer.File,
+) {
+  const meeting = await requireActiveMeeting(meetingId);
+  await getAccessibleProject(userId, meeting.board.project.id);
+
+  const existing = await prisma.meetingParticipant.findFirst({
+    where: { meetingId: meeting.id, userId, leftAt: null },
+  });
+  if (!existing) {
+    throw new AppError("You are not in this meeting", 404, "PARTICIPANT_NOT_FOUND");
+  }
+
+  const mime = file.mimetype || "application/octet-stream";
+  if (!mime.startsWith("image/")) {
+    throw new AppError(
+      "Background must be an image (JPEG, PNG, WebP, or GIF)",
+      400,
+      "UNSUPPORTED_FILE_TYPE",
+    );
+  }
+
+  const uploaded = await uploadBuffer({
+    buffer: file.buffer,
+    originalName: file.originalname || "meeting-bg.jpg",
+    mimeType: mime,
+  });
+
+  const updated = await prisma.meetingParticipant.update({
+    where: { id: existing.id },
+    data: {
+      tileBgMode: MeetingTileBgMode.IMAGE,
+      tileBgUrl: uploaded.fileUrl,
+    },
+    include: participantInclude,
+  });
+
+  const participants = await prisma.meetingParticipant.findMany({
+    where: { meetingId: meeting.id, leftAt: null },
+    include: participantInclude,
+    orderBy: { joinedAt: "asc" },
+  });
+
+  return {
+    meeting: publicMeeting({ ...meeting, participants }),
+    participant: publicParticipant(updated),
     participants: participants.map(publicParticipant),
   };
 }

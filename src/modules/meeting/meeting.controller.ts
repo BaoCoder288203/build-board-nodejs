@@ -5,12 +5,15 @@ import { successResponse } from "../../common/response.js";
 import { parseOrThrow } from "../../common/validation.js";
 import { SERVER_EVENT } from "../../realtime/events.js";
 import { getRealtimeNamespace, clearMeetingMediaState } from "../../realtime/socket.js";
+import { requireUploadedFile } from "../../middleware/upload.js";
 import * as meetingService from "./meeting.service.js";
+import { resolveIceServers } from "./webrtc-ice.js";
 import {
   createMeetingSchema,
   kickParticipantSchema,
   listMeetingsQuerySchema,
   transferHostSchema,
+  updateMyAppearanceSchema,
 } from "./meeting.schema.js";
 
 function emitMeetingCreated(input: {
@@ -289,6 +292,70 @@ export async function kick(req: Request, res: Response, next: NextFunction) {
       participants: result.participants,
     });
     return successResponse(res, result, "Participant removed");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateMyAppearance(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const body = parseOrThrow(updateMyAppearanceSchema, req.body);
+    const result = await meetingService.updateMyAppearance(
+      req.user.id,
+      param(req, "meetingId"),
+      body,
+    );
+    emitMeetingParticipants({
+      meetingId: result.meeting.id,
+      boardId: result.meeting.boardId,
+      workspaceId: result.meeting.workspaceId,
+      participants: result.participants,
+    });
+    return successResponse(res, result, "Appearance updated");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function uploadMyBackground(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const file = requireUploadedFile(req.file);
+    const result = await meetingService.uploadMyTileBackground(
+      req.user.id,
+      param(req, "meetingId"),
+      file,
+    );
+    emitMeetingParticipants({
+      meetingId: result.meeting.id,
+      boardId: result.meeting.boardId,
+      workspaceId: result.meeting.workspaceId,
+      participants: result.participants,
+    });
+    return successResponse(res, result, "Background updated");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function iceServers(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await resolveIceServers(req.user.id);
+    return successResponse(res, result, "ICE servers");
   } catch (error) {
     next(error);
   }
