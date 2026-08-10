@@ -134,18 +134,21 @@ function removePresence(room: string, socketId: string) {
   }
 }
 
-function emitRoomPresence(room: string) {
+function emitRoomPresence(room: string, extraSocket?: Socket) {
   const rt = getRealtimeNamespace();
   if (!rt) return;
   const current = roomPresenceIndex.get(room);
   const users = current
     ? [...new Map([...current.values()].map((u) => [u.id, u])).values()]
     : [];
-  rt.to(room).emit(SERVER_EVENT.ROOM_PRESENCE, {
+  const payload = {
     room,
     users,
     occurredAt: new Date().toISOString(),
-  });
+  };
+  rt.to(room).emit(SERVER_EVENT.ROOM_PRESENCE, payload);
+  // Direct emit so the joiner always gets a snapshot even if room broadcast races
+  extraSocket?.emit(SERVER_EVENT.ROOM_PRESENCE, payload);
 }
 
 function emitSocketError(
@@ -267,7 +270,7 @@ function attachRealtimeHandlers(socket: Socket) {
         room,
         joinedAt: new Date().toISOString(),
       });
-      emitRoomPresence(room);
+      emitRoomPresence(room, socket);
       if (room.startsWith("meeting:")) {
         emitMeetingMediaSync(socket, room.slice("meeting:".length));
       }
