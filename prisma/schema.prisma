@@ -132,6 +132,12 @@ enum MeetingStatus {
   ENDED
 }
 
+enum MeetingTileBgMode {
+  NONE
+  BLUR
+  IMAGE
+}
+
 enum OAuthProvider {
   GOOGLE
 }
@@ -755,14 +761,17 @@ model Meeting {
 }
 
 model MeetingParticipant {
-  id        String   @id @default(uuid()) @db.Uuid
-  meetingId String   @map("meeting_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  isHost    Boolean  @default(false) @map("is_host")
-  joinedAt  DateTime @default(now()) @map("joined_at")
-  leftAt    DateTime? @map("left_at")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id           String            @id @default(uuid()) @db.Uuid
+  meetingId    String            @map("meeting_id") @db.Uuid
+  userId       String            @map("user_id") @db.Uuid
+  isHost       Boolean           @default(false) @map("is_host")
+  displayName  String?           @map("display_name") @db.VarChar(80)
+  tileBgMode   MeetingTileBgMode @default(NONE) @map("tile_bg_mode")
+  tileBgUrl    String?           @map("tile_bg_url") @db.Text
+  joinedAt     DateTime          @default(now()) @map("joined_at")
+  leftAt       DateTime?         @map("left_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
