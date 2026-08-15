@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Socket } from "socket.io";
 import { AppError } from "../../../common/app-error.js";
 import { ENGINE_ACTION, CONNECTION_STATUS, UNO_MVP, type UnoColor } from "../shared/uno.enums.js";
-import { unoError } from "../shared/uno.errors.js";
+import { UNO_ERROR, unoError } from "../shared/uno.errors.js";
 import { unoSocketRoom } from "../shared/uno.ids.js";
 import * as roomService from "../room/room.service.js";
 import * as gameService from "../game/game.service.js";

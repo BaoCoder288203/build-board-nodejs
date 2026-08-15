@@ -1,4 +1,4 @@
-import { CONNECTION_STATUS, ENGINE_ACTION, PLAYER_STATUS, ROOM_STATUS, UNO_GAME_STATUS, UNO_MVP } from "../shared/uno.enums.js";
+import { CONNECTION_STATUS, ENGINE_ACTION, PLAYER_STATUS, ROOM_STATUS, UNO_GAME_STATUS, UNO_MVP, type ConnectionStatus } from "../shared/uno.enums.js";
 import { UNO_ERROR, unoError } from "../shared/uno.errors.js";
 import { GameEngine, dealNextRound } from "../game/game.engine.js";
 import type { EngineCommand, EngineResult } from "../game/game.state.js";
@@ -219,7 +219,7 @@ export async function snapshot(userId: string, roomId: string) {
   const state = getState(roomId);
   const connections = Object.fromEntries(
     room.players.map((p) => [p.id, p.connectionStatus]),
-  );
+  ) as Record<string, ConnectionStatus>;
   return {
     sequence: state?.sequence ?? 0,
     serverTime: new Date().toISOString(),
