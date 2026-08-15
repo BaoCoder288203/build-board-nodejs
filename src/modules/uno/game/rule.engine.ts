@@ -40,7 +40,7 @@ export function isPlayable(card: UnoCard, ctx: PlayContext): boolean {
   }
 
   const top = ctx.topDiscard;
-  if (top && card.type !== UNO_CARD_TYPE.WILD && card.value === top.value) {
+  if (top && card.value === top.value) {
     return true;
   }
 
