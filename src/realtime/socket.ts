@@ -39,6 +39,11 @@ import {
   recordTypingEvent,
 } from "./metrics.js";
 import { assertRoomAccess } from "./rooms.js";
+import {
+  attachUnoHandlers,
+  handleUnoDisconnect,
+} from "../modules/uno/socket/uno.gateway.js";
+import { bindUnoRealtime } from "../modules/uno/socket/uno.namespace.js";
 
 const MAX_ROOM_ACTIONS_PER_MINUTE = 120;
 const MAX_TYPING_EVENTS_PER_MINUTE = 60;
@@ -581,6 +586,7 @@ function attachRealtimeHandlers(socket: Socket) {
 
   socket.on("disconnect", (reason) => {
     recordConnectionClose();
+    void handleUnoDisconnect(socket);
     rtLog.info("disconnect", {
       socketId: socket.id,
       userId: socket.data.user?.id,
@@ -625,6 +631,7 @@ export function initializeRealtime(httpServer: HttpServer) {
 
   const rt = io.of(RT_NAMESPACE);
   rtNamespace = rt;
+  bindUnoRealtime(rt);
   rt.use(async (socket, next) => {
     try {
       await authenticateSocket(socket);
@@ -645,6 +652,7 @@ export function initializeRealtime(httpServer: HttpServer) {
       userRoom: personalRoom,
     });
     attachRealtimeHandlers(socket);
+    attachUnoHandlers(socket);
   });
 
   if (!metricsTimer) {
