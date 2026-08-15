@@ -191,6 +191,8 @@ model User {
   createdMeetings      Meeting[]               @relation("MeetingCreator")
   endedMeetings        Meeting[]               @relation("MeetingEnder")
   meetingParticipants  MeetingParticipant[]
+  hostedUnoRooms       UnoRoom[]               @relation("UnoRoomHost")
+  unoPlayers           UnoPlayer[]
 
   @@index([email])
   @@index([username])
@@ -309,6 +311,7 @@ model Workspace {
   activities   Activity[]
   notifications Notification[]
   meetings      Meeting[]
+  unoRooms      UnoRoom[]
 
   @@index([ownerId])
   @@index([slug])
@@ -556,6 +559,7 @@ model Board {
   columns Column[]
   tasks   Task[]
   meetings Meeting[]
+  unoRooms UnoRoom[]
 
   @@index([projectId])
   @@index([position])
@@ -753,6 +757,7 @@ model Meeting {
   creator      User                 @relation("MeetingCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   ender        User?                @relation("MeetingEnder", fields: [endedBy], references: [id], onDelete: SetNull)
   participants MeetingParticipant[]
+  unoRooms     UnoRoom[]
 
   @@index([boardId, status])
   @@index([workspaceId, status])
@@ -999,4 +1004,112 @@ model NotificationSetting {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notification_settings")
+}
+
+// =============================================================================
+// UNO Game
+// =============================================================================
+
+enum UnoRoomStatus {
+  WAITING
+  READY
+  PLAYING
+  FINISHED
+  CLOSED
+}
+
+enum UnoGameStatus {
+  INITIALIZING
+  DEALING
+  PLAYING
+  WAITING_FOR_COLOR
+  WAITING_FOR_CHALLENGE
+  PAUSED
+  ROUND_FINISHED
+  FINISHED
+  ABORTED
+}
+
+enum UnoContextType {
+  MEETING
+  BOARD
+  WORKSPACE
+}
+
+model UnoRoom {
+  id             String         @id @default(uuid()) @db.Uuid
+  workspaceId    String         @map("workspace_id") @db.Uuid
+  boardId        String?        @map("board_id") @db.Uuid
+  meetingId      String?        @map("meeting_id") @db.Uuid
+  contextType    UnoContextType @map("context_type")
+  hostUserId     String         @map("host_user_id") @db.Uuid
+  status         UnoRoomStatus  @default(WAITING)
+  maxPlayers     Int            @default(6) @map("max_players")
+  allowSpectator Boolean        @default(true) @map("allow_spectator")
+  rules          Json
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  board     Board?           @relation(fields: [boardId], references: [id], onDelete: SetNull)
+  meeting   Meeting?         @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  host      User             @relation("UnoRoomHost", fields: [hostUserId], references: [id], onDelete: Restrict)
+  players   UnoPlayer[]
+  sessions  UnoGameSession[]
+
+  @@index([workspaceId, status])
+  @@index([meetingId])
+  @@index([boardId])
+  @@map("uno_rooms")
+}
+
+model UnoPlayer {
+  id               String   @id @default(uuid()) @db.Uuid
+  roomId           String   @map("room_id") @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  displayName      String   @map("display_name") @db.VarChar(255)
+  isHost           Boolean  @default(false) @map("is_host")
+  isSpectator      Boolean  @default(false) @map("is_spectator")
+  status           String   @db.VarChar(32)
+  connectionStatus String   @map("connection_status") @db.VarChar(32)
+  seatIndex        Int?     @map("seat_index")
+  joinedAt         DateTime @default(now()) @map("joined_at")
+
+  room UnoRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+  @@map("uno_players")
+}
+
+model UnoGameSession {
+  id          String        @id @default(uuid()) @db.Uuid
+  roomId      String        @map("room_id") @db.Uuid
+  status      UnoGameStatus
+  roundNumber Int           @default(1) @map("round_number")
+  sequence    Int           @default(0)
+  scores      Json
+  rules       Json
+  startedAt   DateTime      @default(now()) @map("started_at")
+  endedAt     DateTime?     @map("ended_at")
+  winnerId    String?       @map("winner_id") @db.Uuid
+  endReason   String?       @map("end_reason") @db.VarChar(64)
+  room        UnoRoom       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  result      UnoGameResult?
+
+  @@index([roomId, startedAt])
+  @@map("uno_game_sessions")
+}
+
+model UnoGameResult {
+  id        String         @id @default(uuid()) @db.Uuid
+  sessionId String         @unique @map("session_id") @db.Uuid
+  scores    Json
+  winnerId  String?        @map("winner_id") @db.Uuid
+  createdAt DateTime       @default(now()) @map("created_at")
+  session   UnoGameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("uno_game_results")
 }
