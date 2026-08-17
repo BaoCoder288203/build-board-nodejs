@@ -305,7 +305,7 @@ export async function leaveRoom(userId: string, roomId: string) {
 
   if (remaining.length === 0) {
     await roomRepo.updateRoom(roomId, { status: ROOM_STATUS.CLOSED });
-  } else if (room.status !== ROOM_STATUS.PLAYING) {
+  } else if (room.status !== ROOM_STATUS.PLAYING && room.status !== ROOM_STATUS.CLOSED) {
     const latest = await roomRepo.findRoomById(roomId);
     if (latest) {
       await roomRepo.updateRoom(roomId, { status: lobbyStatus(latest.players) });
