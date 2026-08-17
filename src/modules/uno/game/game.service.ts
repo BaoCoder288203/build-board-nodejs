@@ -1,4 +1,4 @@
-import { CONNECTION_STATUS, ENGINE_ACTION, PLAYER_STATUS, ROOM_STATUS, UNO_GAME_STATUS, UNO_MVP, type ConnectionStatus } from "../shared/uno.enums.js";
+import { CONNECTION_STATUS, END_REASON, ENGINE_ACTION, PLAYER_STATUS, ROOM_STATUS, UNO_GAME_STATUS, UNO_MVP, type ConnectionStatus, type UnoEndReason } from "../shared/uno.enums.js";
 import { UNO_ERROR, unoError } from "../shared/uno.errors.js";
 import { GameEngine, dealNextRound } from "../game/game.engine.js";
 import type { EngineCommand, EngineResult } from "../game/game.state.js";
@@ -8,11 +8,12 @@ import * as resultRepo from "../persistence/uno-result.repository.js";
 import * as roomService from "../room/room.service.js";
 import {
   bindSession,
+  clearGame,
   getSessionByRoom,
   getState,
   type RuntimeSession,
 } from "../session/game-session.store.js";
-import { broadcastEngineResult, emitSnapshotToUser } from "../socket/uno.broadcaster.js";
+import { broadcastEngineResult, emitRoomUpdated, emitSnapshotToUser } from "../socket/uno.broadcaster.js";
 
 function requirePlayer(room: Awaited<ReturnType<typeof roomRepo.findRoomById>>, userId: string) {
   if (!room) throw unoError(UNO_ERROR.ROOM_NOT_FOUND);
@@ -238,6 +239,37 @@ export async function emitSnapshot(userId: string, roomId: string) {
   return payload;
 }
 
+export async function abortGame(roomId: string, reason: UnoEndReason) {
+  const session = getSessionByRoom(roomId);
+  const state = session?.engine.state;
+  if (!session || !state) return;
+  if (state.status === UNO_GAME_STATUS.FINISHED || state.status === UNO_GAME_STATUS.ABORTED) {
+    return;
+  }
+  state.status = UNO_GAME_STATUS.ABORTED;
+  state.endReason = reason;
+  state.sequence += 1;
+  await persistSessionMeta(session);
+  await roomRepo.updateRoom(roomId, { status: ROOM_STATUS.CLOSED });
+  broadcastEngineResult(session, {
+    ok: true,
+    sequence: state.sequence,
+    state,
+    events: [
+      {
+        type: "GAME_ENDED",
+        payload: {
+          winnerId: state.winnerId,
+          reason: state.endReason,
+          scores: state.scores,
+          sequence: state.sequence,
+        },
+      },
+    ],
+    privateHandsChanged: [],
+  });
+}
+
 export async function onPlayerLeftMidGame(roomId: string, playerId: string) {
   const session = getSessionByRoom(roomId);
   const state = session?.engine.state;
@@ -245,14 +277,52 @@ export async function onPlayerLeftMidGame(roomId: string, playerId: string) {
   const player = state.players.find((p) => p.playerId === playerId);
   if (player) player.connectionStatus = CONNECTION_STATUS.LEFT;
   const remaining = state.players.filter(
-    (p) => p.connectionStatus !== CONNECTION_STATUS.LEFT && p.status === PLAYER_STATUS.PLAYING,
+    (p) =>
+      p.connectionStatus !== CONNECTION_STATUS.LEFT &&
+      p.connectionStatus !== CONNECTION_STATUS.REMOVED &&
+      p.status === PLAYER_STATUS.PLAYING,
   );
-  if (remaining.length === 1 && remaining[0] && session) {
-    state.status = UNO_GAME_STATUS.FINISHED;
-    state.winnerId = remaining[0].playerId;
-    state.endReason = "LAST_PLAYER_REMAINING";
+  if (!session) return;
+  if (remaining.length === 1 && remaining[0]) {
+    await returnRoomToLobby(roomId, session);
+    return;
+  }
+  if (remaining.length === 0) {
+    await abortGame(roomId, END_REASON.ABANDONED);
+  }
+}
+
+async function returnRoomToLobby(roomId: string, session: RuntimeSession) {
+  const state = session.engine.state;
+  if (state) {
+    state.status = UNO_GAME_STATUS.ABORTED;
+    state.endReason = END_REASON.LAST_PLAYER_REMAINING;
+    state.winnerId = undefined;
     state.sequence += 1;
     await persistSessionMeta(session);
-    await roomRepo.updateRoom(roomId, { status: ROOM_STATUS.FINISHED });
+  }
+  clearGame(roomId);
+
+  const room = await roomRepo.findRoomById(roomId);
+  if (!room) return;
+
+  for (const player of room.players) {
+    if (player.connectionStatus === CONNECTION_STATUS.LEFT || player.connectionStatus === CONNECTION_STATUS.REMOVED) {
+      await roomRepo.deletePlayer(player.id);
+      continue;
+    }
+    if (player.isSpectator) continue;
+    await roomRepo.updatePlayer(player.id, {
+      status: PLAYER_STATUS.WAITING,
+    });
+  }
+
+  await roomRepo.updateRoom(roomId, { status: ROOM_STATUS.WAITING });
+  const latest = await roomRepo.findRoomById(roomId);
+  if (!latest) return;
+  const publicRoom = roomService.toPublicRoom(latest);
+  emitRoomUpdated(publicRoom);
+  for (const player of latest.players) {
+    await emitSnapshot(player.userId, roomId);
   }
 }

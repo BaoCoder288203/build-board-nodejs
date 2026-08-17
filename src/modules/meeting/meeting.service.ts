@@ -15,6 +15,10 @@ import type {
   CreateMeetingInput,
   UpdateMyAppearanceInput,
 } from "./meeting.schema.js";
+import {
+  abortUnoForMeeting,
+  leaveUnoForMeetingUser,
+} from "../uno/integration/meeting-lifecycle.js";
 
 const participantInclude = {
   user: {
@@ -364,18 +368,33 @@ export async function leaveMeeting(userId: string, meetingId: string) {
     throw new AppError("You are not a participant", 404, "PARTICIPANT_NOT_FOUND");
   }
 
-  const wasHost = existing.isHost && existing.leftAt == null;
-  const leftAt = existing.leftAt ?? new Date();
-
-  if (!existing.leftAt) {
-    await prisma.meetingParticipant.update({
-      where: { id: existing.id },
-      data: {
-        leftAt,
-        isHost: false,
-      },
+  if (existing.leftAt) {
+    const remaining = await prisma.meetingParticipant.findMany({
+      where: { meetingId: meeting.id, leftAt: null },
+      include: participantInclude,
+      orderBy: { joinedAt: "asc" },
     });
+    return {
+      meeting: publicMeeting(meeting),
+      participant: publicParticipant(existing),
+      endedMeeting: null,
+      newHost: null,
+      participants: remaining.map(publicParticipant),
+      alreadyLeft: true,
+    };
   }
+
+  const wasHost = existing.isHost;
+  const leftAt = new Date();
+
+  await prisma.meetingParticipant.update({
+    where: { id: existing.id },
+    data: {
+      leftAt,
+      isHost: false,
+    },
+  });
+  await leaveUnoForMeetingUser(userId, meeting.id);
 
   await prisma.activity.create({
     data: {
@@ -437,6 +456,7 @@ export async function leaveMeeting(userId: string, meetingId: string) {
     endedMeeting,
     newHost,
     participants: remaining.map(publicParticipant),
+    alreadyLeft: false,
   };
 }
 
@@ -514,6 +534,8 @@ export async function endMeeting(userId: string, meetingId: string) {
       },
     },
   });
+
+  await abortUnoForMeeting(meeting.id);
 
   return publicMeeting(ended);
 }
@@ -635,6 +657,8 @@ export async function kickParticipant(
     data: { leftAt, isHost: false },
     include: participantInclude,
   });
+
+  await leaveUnoForMeetingUser(targetUserId, meeting.id);
 
   const participants = await prisma.meetingParticipant.findMany({
     where: { meetingId: meeting.id, leftAt: null },
