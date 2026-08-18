@@ -7,6 +7,12 @@ import { SERVER_EVENT } from "../../realtime/events.js";
 import { getRealtimeNamespace, clearMeetingMediaState } from "../../realtime/socket.js";
 import { requireUploadedFile } from "../../middleware/upload.js";
 import * as meetingService from "./meeting.service.js";
+import {
+  broadcastMeetingLeave,
+  emitMeetingEnded,
+  emitMeetingParticipantEvent,
+  emitMeetingParticipants,
+} from "./meeting.realtime.js";
 import { resolveIceServers } from "./webrtc-ice.js";
 import {
   createMeetingSchema,
@@ -40,72 +46,6 @@ function emitMeetingCreated(input: {
   );
 }
 
-function emitMeetingParticipantEvent(
-  event: typeof SERVER_EVENT.MEETING_JOINED | typeof SERVER_EVENT.MEETING_LEFT,
-  input: {
-    meetingId: string;
-    boardId: string;
-    workspaceId: string;
-    participant: unknown;
-    actorId: string;
-  },
-) {
-  const rt = getRealtimeNamespace();
-  if (!rt) return;
-  const payload = {
-    meetingId: input.meetingId,
-    boardId: input.boardId,
-    workspaceId: input.workspaceId,
-    participant: input.participant,
-    actorId: input.actorId,
-    occurredAt: new Date().toISOString(),
-  };
-  rt.to(`board:${input.boardId}`).emit(event, payload);
-  rt.to(`workspace:${input.workspaceId}`).emit(event, payload);
-}
-
-function emitMeetingParticipants(input: {
-  meetingId: string;
-  boardId: string;
-  workspaceId: string;
-  participants: unknown[];
-}) {
-  const rt = getRealtimeNamespace();
-  if (!rt) return;
-  const payload = {
-    meetingId: input.meetingId,
-    boardId: input.boardId,
-    workspaceId: input.workspaceId,
-    participants: input.participants,
-    occurredAt: new Date().toISOString(),
-  };
-  rt.to(`board:${input.boardId}`).emit(SERVER_EVENT.MEETING_PARTICIPANTS, payload);
-  rt.to(`workspace:${input.workspaceId}`).emit(
-    SERVER_EVENT.MEETING_PARTICIPANTS,
-    payload,
-  );
-}
-
-function emitMeetingEnded(input: {
-  meetingId: string;
-  boardId: string;
-  workspaceId: string;
-  endedBy: string;
-}) {
-  clearMeetingMediaState(input.meetingId);
-  const rt = getRealtimeNamespace();
-  if (!rt) return;
-  const payload = {
-    meetingId: input.meetingId,
-    boardId: input.boardId,
-    workspaceId: input.workspaceId,
-    endedBy: input.endedBy,
-    occurredAt: new Date().toISOString(),
-  };
-  rt.to(`board:${input.boardId}`).emit(SERVER_EVENT.MEETING_ENDED, payload);
-  rt.to(`workspace:${input.workspaceId}`).emit(SERVER_EVENT.MEETING_ENDED, payload);
-}
-
 export async function startInBoard(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
@@ -120,7 +60,7 @@ export async function startInBoard(req: Request, res: Response, next: NextFuncti
       participants: result.participants,
       actorId: req.user.id,
     });
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
@@ -162,14 +102,14 @@ export async function join(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const result = await meetingService.joinMeeting(req.user.id, param(req, "meetingId"));
-    emitMeetingParticipantEvent(SERVER_EVENT.MEETING_JOINED, {
+    emitMeetingParticipantEvent(getRealtimeNamespace(), SERVER_EVENT.MEETING_JOINED, {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
       participant: result.participant,
       actorId: req.user.id,
     });
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
@@ -185,33 +125,8 @@ export async function leave(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const result = await meetingService.leaveMeeting(req.user.id, param(req, "meetingId"));
-    emitMeetingParticipantEvent(SERVER_EVENT.MEETING_LEFT, {
-      meetingId: result.meeting.id,
-      boardId: result.meeting.boardId,
-      workspaceId: result.meeting.workspaceId,
-      participant: result.participant,
-      actorId: req.user.id,
-    });
-    if (result.endedMeeting) {
-      emitMeetingEnded({
-        meetingId: result.endedMeeting.id,
-        boardId: result.endedMeeting.boardId,
-        workspaceId: result.endedMeeting.workspaceId,
-        endedBy: req.user.id,
-      });
-      emitMeetingParticipants({
-        meetingId: result.endedMeeting.id,
-        boardId: result.endedMeeting.boardId,
-        workspaceId: result.endedMeeting.workspaceId,
-        participants: [],
-      });
-    } else {
-      emitMeetingParticipants({
-        meetingId: result.meeting.id,
-        boardId: result.meeting.boardId,
-        workspaceId: result.meeting.workspaceId,
-        participants: result.participants,
-      });
+    if (!result.alreadyLeft) {
+      broadcastMeetingLeave(getRealtimeNamespace(), result, req.user.id, clearMeetingMediaState);
     }
     return successResponse(
       res,
@@ -230,13 +145,14 @@ export async function end(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
     const result = await meetingService.endMeeting(req.user.id, param(req, "meetingId"));
-    emitMeetingEnded({
+    clearMeetingMediaState(result.id);
+    emitMeetingEnded(getRealtimeNamespace(), {
       meetingId: result.id,
       boardId: result.boardId,
       workspaceId: result.workspaceId,
       endedBy: req.user.id,
     });
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.id,
       boardId: result.boardId,
       workspaceId: result.workspaceId,
@@ -257,7 +173,7 @@ export async function transferHost(req: Request, res: Response, next: NextFuncti
       param(req, "meetingId"),
       body.toUserId,
     );
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
@@ -278,14 +194,14 @@ export async function kick(req: Request, res: Response, next: NextFunction) {
       param(req, "meetingId"),
       body.userId,
     );
-    emitMeetingParticipantEvent(SERVER_EVENT.MEETING_LEFT, {
+    emitMeetingParticipantEvent(getRealtimeNamespace(), SERVER_EVENT.MEETING_LEFT, {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
       participant: result.participant,
       actorId: req.user.id,
     });
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
@@ -310,7 +226,7 @@ export async function updateMyAppearance(
       param(req, "meetingId"),
       body,
     );
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,
@@ -335,7 +251,7 @@ export async function uploadMyBackground(
       param(req, "meetingId"),
       file,
     );
-    emitMeetingParticipants({
+    emitMeetingParticipants(getRealtimeNamespace(), {
       meetingId: result.meeting.id,
       boardId: result.meeting.boardId,
       workspaceId: result.meeting.workspaceId,

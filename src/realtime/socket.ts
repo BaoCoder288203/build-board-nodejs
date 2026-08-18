@@ -44,15 +44,61 @@ import {
   handleUnoDisconnect,
 } from "../modules/uno/socket/uno.gateway.js";
 import { bindUnoRealtime } from "../modules/uno/socket/uno.namespace.js";
+import { leaveMeeting } from "../modules/meeting/meeting.service.js";
+import { broadcastMeetingLeave } from "../modules/meeting/meeting.realtime.js";
 
 const MAX_ROOM_ACTIONS_PER_MINUTE = 120;
 const MAX_TYPING_EVENTS_PER_MINUTE = 60;
 const MAX_SIGNALING_EVENTS_PER_MINUTE = 300;
 const MAX_ROOMS_PER_SOCKET = 24;
 const METRICS_LOG_INTERVAL_MS = 60_000;
+const MEETING_DISCONNECT_GRACE_MS = 8_000;
 
 let rtNamespace: Namespace | null = null;
 let metricsTimer: ReturnType<typeof setInterval> | null = null;
+const pendingMeetingLeaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+function meetingLeaveKey(userId: string, meetingId: string) {
+  return `${userId}:${meetingId}`;
+}
+
+function cancelPendingMeetingLeave(userId: string, meetingId: string) {
+  const key = meetingLeaveKey(userId, meetingId);
+  const timer = pendingMeetingLeaves.get(key);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingMeetingLeaves.delete(key);
+}
+
+async function userStillInMeetingRoom(userId: string, meetingId: string) {
+  const rt = getRealtimeNamespace();
+  if (!rt) return false;
+  const sockets = await rt.in(`meeting:${meetingId}`).fetchSockets();
+  return sockets.some((socket) => socket.data.user?.id === userId);
+}
+
+function scheduleMeetingLeave(userId: string, meetingId: string) {
+  cancelPendingMeetingLeave(userId, meetingId);
+  const timer = setTimeout(() => {
+    pendingMeetingLeaves.delete(meetingLeaveKey(userId, meetingId));
+    void (async () => {
+      if (await userStillInMeetingRoom(userId, meetingId)) return;
+      try {
+        const result = await leaveMeeting(userId, meetingId);
+        if (result.alreadyLeft) return;
+        broadcastMeetingLeave(getRealtimeNamespace(), result, userId, clearMeetingMedia);
+      } catch (error) {
+        rtLog.info("meeting_auto_leave_skipped", {
+          userId,
+          meetingId,
+          message: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    })();
+  }, MEETING_DISCONNECT_GRACE_MS);
+  timer.unref?.();
+  pendingMeetingLeaves.set(meetingLeaveKey(userId, meetingId), timer);
+}
 
 function isCollaborativeRoom(room: string) {
   return (
@@ -277,7 +323,9 @@ function attachRealtimeHandlers(socket: Socket) {
       });
       emitRoomPresence(room, socket);
       if (room.startsWith("meeting:")) {
-        emitMeetingMediaSync(socket, room.slice("meeting:".length));
+        const meetingId = room.slice("meeting:".length);
+        cancelPendingMeetingLeave(socket.data.user.id, meetingId);
+        emitMeetingMediaSync(socket, meetingId);
       }
     } catch (error) {
       handleError(socket, error, CLIENT_EVENT.ROOM_JOIN);
@@ -309,7 +357,9 @@ function attachRealtimeHandlers(socket: Socket) {
     removePresence(room, socket.id);
     recordRoomLeave();
     if (room.startsWith("meeting:")) {
-      removeMeetingMediaUser(room.slice("meeting:".length), socket.data.user.id);
+      const meetingId = room.slice("meeting:".length);
+      removeMeetingMediaUser(meetingId, socket.data.user.id);
+      scheduleMeetingLeave(socket.data.user.id, meetingId);
     }
     rtLog.debug("room_leave", {
       socketId: socket.id,
@@ -578,7 +628,9 @@ function attachRealtimeHandlers(socket: Socket) {
     for (const room of rooms) {
       removePresence(room, socket.id);
       if (room.startsWith("meeting:")) {
-        removeMeetingMediaUser(room.slice("meeting:".length), socket.data.user.id);
+        const meetingId = room.slice("meeting:".length);
+        removeMeetingMediaUser(meetingId, socket.data.user.id);
+        scheduleMeetingLeave(socket.data.user.id, meetingId);
       }
       emitRoomPresence(room);
     }
