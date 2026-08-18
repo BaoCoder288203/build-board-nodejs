@@ -19,6 +19,10 @@ import {
   abortUnoForMeeting,
   leaveUnoForMeetingUser,
 } from "../uno/integration/meeting-lifecycle.js";
+import {
+  abortChessForMeeting,
+  leaveChessForMeetingUser,
+} from "../chess/integration/meeting-lifecycle.js";
 
 const participantInclude = {
   user: {
@@ -395,6 +399,7 @@ export async function leaveMeeting(userId: string, meetingId: string) {
     },
   });
   await leaveUnoForMeetingUser(userId, meeting.id);
+  await leaveChessForMeetingUser(userId, meeting.id);
 
   await prisma.activity.create({
     data: {
@@ -536,6 +541,7 @@ export async function endMeeting(userId: string, meetingId: string) {
   });
 
   await abortUnoForMeeting(meeting.id);
+  await abortChessForMeeting(meeting.id);
 
   return publicMeeting(ended);
 }
@@ -659,6 +665,7 @@ export async function kickParticipant(
   });
 
   await leaveUnoForMeetingUser(targetUserId, meeting.id);
+  await leaveChessForMeetingUser(targetUserId, meeting.id);
 
   const participants = await prisma.meetingParticipant.findMany({
     where: { meetingId: meeting.id, leftAt: null },

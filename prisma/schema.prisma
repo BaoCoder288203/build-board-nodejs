@@ -193,6 +193,8 @@ model User {
   meetingParticipants  MeetingParticipant[]
   hostedUnoRooms       UnoRoom[]               @relation("UnoRoomHost")
   unoPlayers           UnoPlayer[]
+  hostedChessRooms     ChessRoom[]             @relation("ChessRoomHost")
+  chessPlayers         ChessPlayer[]
 
   @@index([email])
   @@index([username])
@@ -312,6 +314,7 @@ model Workspace {
   notifications Notification[]
   meetings      Meeting[]
   unoRooms      UnoRoom[]
+  chessRooms    ChessRoom[]
 
   @@index([ownerId])
   @@index([slug])
@@ -560,6 +563,7 @@ model Board {
   tasks   Task[]
   meetings Meeting[]
   unoRooms UnoRoom[]
+  chessRooms ChessRoom[]
 
   @@index([projectId])
   @@index([position])
@@ -758,6 +762,7 @@ model Meeting {
   ender        User?                @relation("MeetingEnder", fields: [endedBy], references: [id], onDelete: SetNull)
   participants MeetingParticipant[]
   unoRooms     UnoRoom[]
+  chessRooms   ChessRoom[]
 
   @@index([boardId, status])
   @@index([workspaceId, status])
@@ -1112,4 +1117,116 @@ model UnoGameResult {
   session   UnoGameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("uno_game_results")
+}
+
+// =============================================================================
+// Chess Game
+// =============================================================================
+
+enum ChessRoomStatus {
+  WAITING
+  READY
+  PLAYING
+  FINISHED
+  CLOSED
+}
+
+enum ChessGameStatus {
+  INITIALIZING
+  PLAYING
+  WAITING_FOR_PROMOTION
+  WAITING_FOR_DRAW
+  PAUSED
+  FINISHED
+  ABORTED
+}
+
+enum ChessContextType {
+  MEETING
+  BOARD
+  WORKSPACE
+}
+
+model ChessRoom {
+  id             String           @id @default(uuid()) @db.Uuid
+  workspaceId    String           @map("workspace_id") @db.Uuid
+  boardId        String?          @map("board_id") @db.Uuid
+  meetingId      String?          @map("meeting_id") @db.Uuid
+  contextType    ChessContextType @map("context_type")
+  hostUserId     String           @map("host_user_id") @db.Uuid
+  status         ChessRoomStatus  @default(WAITING)
+  maxPlayers     Int              @default(2) @map("max_players")
+  allowSpectator Boolean          @default(true) @map("allow_spectator")
+  initialTimeMs  Int              @default(600000) @map("initial_time_ms")
+  incrementMs    Int              @default(0) @map("increment_ms")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  board     Board?             @relation(fields: [boardId], references: [id], onDelete: SetNull)
+  meeting   Meeting?           @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  host      User               @relation("ChessRoomHost", fields: [hostUserId], references: [id], onDelete: Restrict)
+  players   ChessPlayer[]
+  sessions  ChessGameSession[]
+
+  @@index([workspaceId, status])
+  @@index([meetingId])
+  @@index([boardId])
+  @@map("chess_rooms")
+}
+
+model ChessPlayer {
+  id               String   @id @default(uuid()) @db.Uuid
+  roomId           String   @map("room_id") @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  displayName      String   @map("display_name") @db.VarChar(255)
+  isHost           Boolean  @default(false) @map("is_host")
+  isSpectator      Boolean  @default(false) @map("is_spectator")
+  color            String?  @db.VarChar(8)
+  status           String   @db.VarChar(32)
+  connectionStatus String   @map("connection_status") @db.VarChar(32)
+  joinedAt         DateTime @default(now()) @map("joined_at")
+
+  room ChessRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+  @@map("chess_players")
+}
+
+model ChessGameSession {
+  id          String          @id @default(uuid()) @db.Uuid
+  roomId      String          @map("room_id") @db.Uuid
+  status      ChessGameStatus
+  fen         String          @db.Text
+  pgn         String          @db.Text
+  moves       Json            @default("[]")
+  whiteTimeMs Int             @map("white_time_ms")
+  blackTimeMs Int             @map("black_time_ms")
+  sequence    Int             @default(0)
+  winnerId    String?         @map("winner_id") @db.Uuid
+  endReason   String?         @map("end_reason") @db.VarChar(64)
+  startedAt   DateTime        @default(now()) @map("started_at")
+  endedAt     DateTime?       @map("ended_at")
+
+  room   ChessRoom        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  result ChessGameResult?
+
+  @@index([roomId, startedAt])
+  @@map("chess_game_sessions")
+}
+
+model ChessGameResult {
+  id        String           @id @default(uuid()) @db.Uuid
+  sessionId String           @unique @map("session_id") @db.Uuid
+  pgn       String           @db.Text
+  fen       String           @db.Text
+  winnerId  String?          @map("winner_id") @db.Uuid
+  reason    String           @db.VarChar(64)
+  createdAt DateTime         @default(now()) @map("created_at")
+  session   ChessGameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("chess_game_results")
 }

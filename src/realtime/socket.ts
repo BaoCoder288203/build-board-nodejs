@@ -44,6 +44,11 @@ import {
   handleUnoDisconnect,
 } from "../modules/uno/socket/uno.gateway.js";
 import { bindUnoRealtime } from "../modules/uno/socket/uno.namespace.js";
+import {
+  attachChessHandlers,
+  handleChessDisconnect,
+} from "../modules/chess/socket/chess.gateway.js";
+import { bindChessRealtime } from "../modules/chess/socket/chess.namespace.js";
 import { leaveMeeting } from "../modules/meeting/meeting.service.js";
 import { broadcastMeetingLeave } from "../modules/meeting/meeting.realtime.js";
 
@@ -639,6 +644,7 @@ function attachRealtimeHandlers(socket: Socket) {
   socket.on("disconnect", (reason) => {
     recordConnectionClose();
     void handleUnoDisconnect(socket);
+    void handleChessDisconnect(socket);
     rtLog.info("disconnect", {
       socketId: socket.id,
       userId: socket.data.user?.id,
@@ -684,6 +690,7 @@ export function initializeRealtime(httpServer: HttpServer) {
   const rt = io.of(RT_NAMESPACE);
   rtNamespace = rt;
   bindUnoRealtime(rt);
+  bindChessRealtime(rt);
   rt.use(async (socket, next) => {
     try {
       await authenticateSocket(socket);
@@ -705,6 +712,7 @@ export function initializeRealtime(httpServer: HttpServer) {
     });
     attachRealtimeHandlers(socket);
     attachUnoHandlers(socket);
+    attachChessHandlers(socket);
   });
 
   if (!metricsTimer) {
