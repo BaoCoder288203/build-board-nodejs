@@ -440,10 +440,23 @@ export async function listCalendarTasks(
     where: {
       workspaceId: query.workspaceId,
       deletedAt: null,
-      dueDate: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
+      AND: [
+        {
+          OR: [
+            {
+              startDate: { not: null, lte: rangeEnd },
+              dueDate: { not: null, gte: rangeStart },
+            },
+            {
+              startDate: null,
+              dueDate: {
+                gte: rangeStart,
+                lte: rangeEnd,
+              },
+            },
+          ],
+        },
+      ],
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.boardId ? { boardId: query.boardId } : {}),
       ...(query.priority ? { priority: query.priority } : {}),
