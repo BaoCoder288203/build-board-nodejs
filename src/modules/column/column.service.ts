@@ -97,7 +97,7 @@ export async function listColumns(userId: string, boardId: string) {
   const columns = await prisma.column.findMany({
     where: { boardId, deletedAt: null, isArchived: false },
     orderBy: { position: "asc" },
-    include: { _count: { select: { tasks: true } } },
+    include: { _count: { select: { tasks: { where: { deletedAt: null } } } } },
   });
 
   return columns.map((c) => ({

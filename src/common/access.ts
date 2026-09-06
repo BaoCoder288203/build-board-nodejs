@@ -1,5 +1,6 @@
 import { AppError } from "../common/app-error.js";
 import { prisma } from "../database/prisma.js";
+import { visibleProjectTaskWhere } from "./visible-counts.js";
 
 export async function getWorkspaceMembership(userId: string, workspaceId: string) {
   const workspace = await prisma.workspace.findFirst({
@@ -54,7 +55,7 @@ export async function getAccessibleProject(userId: string, projectId: string) {
   const project = await prisma.project.findFirst({
     where: { id: projectId, deletedAt: null },
     include: {
-      _count: { select: { boards: true, members: true, tasks: true } },
+      _count: { select: { boards: true, members: true, tasks: { where: visibleProjectTaskWhere } } },
     },
   });
   if (!project) {

@@ -599,6 +599,75 @@ export async function deleteTask(userId: string, taskId: string) {
   };
 }
 
+export async function restoreTask(userId: string, taskId: string) {
+  const existing = await prisma.task.findFirst({
+    where: { id: taskId, deletedAt: { not: null } },
+    include: taskCardInclude,
+  });
+  if (!existing) {
+    throw new AppError("Archived task not found", 404, "TASK_NOT_FOUND");
+  }
+
+  const access = await assertTaskAccess(userId, existing.projectId, "task:update");
+
+  const column = await prisma.column.findFirst({
+    where: { id: existing.columnId, deletedAt: null, isArchived: false },
+  });
+  if (!column) {
+    throw new AppError(
+      "Cannot restore: the list for this card is missing or archived",
+      400,
+      "COLUMN_UNAVAILABLE",
+    );
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: taskId },
+    data: { deletedAt: null, updatedBy: userId },
+    include: taskCardInclude,
+  });
+
+  await prisma.activity.create({
+    data: {
+      workspaceId: existing.workspaceId,
+      projectId: existing.projectId,
+      actorId: userId,
+      entityType: ActivityEntityType.TASK,
+      entityId: taskId,
+      action: ActivityAction.RESTORE,
+      afterData: { title: updated.title, code: updated.code },
+    },
+  });
+
+  return publicTask(updated, access.workspaceCtx.member.id);
+}
+
+export async function listArchivedTasks(userId: string, boardId: string) {
+  const board = await prisma.board.findFirst({
+    where: { id: boardId, deletedAt: null },
+  });
+  if (!board) throw new AppError("Board not found", 404, "BOARD_NOT_FOUND");
+
+  const access = await assertTaskAccess(userId, board.projectId);
+
+  const rows = await prisma.task.findMany({
+    where: {
+      boardId,
+      deletedAt: { not: null },
+    },
+    orderBy: { deletedAt: "desc" },
+    take: 100,
+    include: taskCardInclude,
+  });
+
+  return {
+    items: rows.map((row) => ({
+      ...publicTask(row, access.workspaceCtx.member.id),
+      deletedAt: row.deletedAt?.toISOString() ?? null,
+    })),
+  };
+}
+
 export async function moveTask(
   userId: string,
   taskId: string,

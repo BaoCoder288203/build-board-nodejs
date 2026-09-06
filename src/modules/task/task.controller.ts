@@ -161,6 +161,34 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function restore(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const result = await taskService.restoreTask(
+      req.user.id,
+      param(req, "taskId"),
+    );
+    emitTaskCreated(result, req.user.id);
+    return successResponse(res, result, "Task restored");
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listArchived(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
+    const boardId = String(req.query.boardId ?? "");
+    if (!boardId) {
+      throw new AppError("boardId is required", 400, "VALIDATION_ERROR");
+    }
+    const result = await taskService.listArchivedTasks(req.user.id, boardId);
+    return successResponse(res, result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function move(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError("Unauthorized", 401, "UNAUTHORIZED");
