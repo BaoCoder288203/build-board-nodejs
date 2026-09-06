@@ -6,6 +6,10 @@ import {
 import { AppError } from "../../common/app-error.js";
 import { prisma } from "../../database/prisma.js";
 import {
+  visibleColumnWhere,
+  visibleTaskWhere,
+} from "../../common/visible-counts.js";
+import {
   buildBoardCoverUrl,
   resolveBoardCover,
 } from "../../common/visual-identity.js";
@@ -91,7 +95,12 @@ export async function createBoard(userId: string, input: CreateBoardInput) {
       },
     },
     include: {
-      _count: { select: { columns: true, tasks: true } },
+      _count: {
+        select: {
+          columns: { where: visibleColumnWhere },
+          tasks: { where: visibleTaskWhere },
+        },
+      },
     },
   });
 
@@ -135,7 +144,14 @@ export async function listBoards(
       skip,
       take: limit,
       orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-      include: { _count: { select: { columns: true, tasks: true } } },
+      include: {
+        _count: {
+          select: {
+            columns: { where: visibleColumnWhere },
+            tasks: { where: visibleTaskWhere },
+          },
+        },
+      },
     }),
   ]);
 
@@ -161,7 +177,6 @@ export async function getBoard(userId: string, boardId: string) {
         where: { deletedAt: null, isArchived: false },
         orderBy: { position: "asc" },
         include: {
-          _count: { select: { tasks: true } },
           tasks: {
             where: { deletedAt: null },
             orderBy: { position: "asc" },
@@ -215,7 +230,6 @@ export async function getBoard(userId: string, boardId: string) {
           },
         },
       },
-      _count: { select: { tasks: true } },
       project: { select: { id: true, name: true, workspaceId: true } },
     },
   });
@@ -227,7 +241,7 @@ export async function getBoard(userId: string, boardId: string) {
 
   return publicBoard(board, {
     project: board.project,
-    tasksCount: board._count.tasks,
+    tasksCount: board.columns.reduce((sum, col) => sum + col.tasks.length, 0),
     columns: board.columns.map((c) => ({
       id: c.id,
       boardId: c.boardId,

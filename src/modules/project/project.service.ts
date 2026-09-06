@@ -15,6 +15,7 @@ import {
 } from "../../common/access.js";
 import { AppError } from "../../common/app-error.js";
 import { prisma } from "../../database/prisma.js";
+import { visibleProjectTaskWhere } from "../../common/visible-counts.js";
 import {
   buildBoardCoverUrl,
   extractProjectInitial,
@@ -213,7 +214,13 @@ export async function listProjects(
       take: limit,
       orderBy: { createdAt: "desc" },
       include: {
-        _count: { select: { boards: true, members: true, tasks: true } },
+        _count: {
+          select: {
+            boards: true,
+            members: true,
+            tasks: { where: visibleProjectTaskWhere },
+          },
+        },
       },
     }),
   ]);

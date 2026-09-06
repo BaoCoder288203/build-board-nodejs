@@ -1,6 +1,7 @@
 import { TaskStatus, type Prisma } from "@prisma/client";
 import { getWorkspaceMembership } from "../../common/access.js";
 import { prisma } from "../../database/prisma.js";
+import { visibleProjectTaskWhere } from "../../common/visible-counts.js";
 import type { MyTasksQuery, UpcomingQuery } from "./dashboard.schema.js";
 
 const taskListSelect = {
@@ -118,7 +119,7 @@ export async function getSummary(userId: string, workspaceId: string) {
         _count: {
           select: {
             boards: { where: { deletedAt: null } },
-            tasks: { where: { deletedAt: null } },
+            tasks: { where: visibleProjectTaskWhere },
           },
         },
       },
